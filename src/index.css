@@ -1,0 +1,372 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-serif: "Cinzel", Georgia, serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --animate-shimmer: shimmer 2.5s infinite linear;
+
+  @keyframes shimmer {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(100%);
+    }
+  }
+}
+
+/* Custom scrollbar to keep up with the Pharaonic aesthetic */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #140f0c;
+}
+::-webkit-scrollbar-thumb {
+  background: #d4af37/30;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #d4af37/60;
+}
+
+@media print {
+  /* Hide absolutely everything on the web app except the dedicated printable papyrus scroll container */
+  body, html {
+    background: #faf3e0 !important;
+    color: #2b1f0d !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  #app-root,
+  #mobile-bottom-nav,
+  #parchment-itinerary,
+  header,
+  footer,
+  section,
+  div:not(#papyrus-print-area):not(#papyrus-print-area *) {
+    display: none !important;
+  }
+  #papyrus-print-area {
+    display: block !important;
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 2.5rem !important;
+    background-color: #faf3e0 !important;
+    border: 12px double #8b6508 !important;
+    border-radius: 12px !important;
+    box-shadow: none !important;
+    color: #2b1f0d !important;
+  }
+  /* Ensure page break safety inside the list */
+  .print-avoid-break {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+}
+
+/* Theme Configuration Variables */
+:root {
+  /* Default: Desert Sun Theme (Warm/Golden) */
+  --bg-deep: #100c08;
+  --bg-base: #140f0c;
+  --bg-surface: #1c1611;
+  --bg-card: #241a10;
+  --bg-input: #201a14;
+  --bg-textarea: #16120e;
+  --bg-secondary: #1a140f;
+  
+  --brand-gold: #d4af37;
+  --brand-gold-light: #e6c280;
+  --brand-gold-bright: #f3e5c8;
+  --brand-gold-dark: #8b6508;
+  --brand-gold-deep: #5c4001;
+
+  --rune-color: #1e1610;
+}
+
+/* Nile Midnight Theme Variables (Cool/Deep Blue & Silver/Cyan) */
+.theme-nile {
+  --bg-deep: #050812;         /* Very dark midnight blue */
+  --bg-base: #090e20;         /* Deep royal blue-black */
+  --bg-surface: #0f1832;      /* Deep navy-blue surface */
+  --bg-card: #152345;         /* Beautiful deep blue card */
+  --bg-input: #111c3a;        /* Input background */
+  --bg-textarea: #0a1128;     /* Dark navy textarea background */
+  --bg-secondary: #0d162d;    /* Secondary panel background */
+
+  --brand-gold: #38bdf8;        /* Bright sky-blue/cyan */
+  --brand-gold-light: #90e0ef;  /* Light icy/silver cyan */
+  --brand-gold-bright: #e0f2fe; /* Extremely soft ice blue */
+  --brand-gold-dark: #0284c7;   /* Deep azure blue */
+  --brand-gold-deep: #0c4a6e;   /* Midnight abyss blue text */
+
+  --rune-color: #0c1935;        /* Cool indigo background runes */
+}
+
+/* Global Styles overriden by theme variables */
+#app-root.theme-nile {
+  background-color: var(--bg-deep) !important;
+  background-image: linear-gradient(to bottom, rgba(5, 8, 18, 0.91), rgba(5, 8, 18, 0.97)), url('/src/assets/images/nile_midnight_bg_1784129212752.jpg') !important;
+  background-attachment: fixed !important;
+  background-size: cover !important;
+  background-position: calc(50% + var(--nile-bg-x, 0px)) center !important;
+}
+
+/* Styling for the selected header content element in theme-nile */
+.theme-nile header > div:nth-of-type(2) {
+  text-shadow: 0 0 25px rgba(56, 189, 248, 0.2);
+  animation: nileGlow 4s ease-in-out infinite alternate;
+}
+
+@keyframes nileGlow {
+  0% {
+    filter: drop-shadow(0 0 8px rgba(56, 189, 248, 0.05));
+  }
+  100% {
+    filter: drop-shadow(0 0 22px rgba(56, 189, 248, 0.22));
+  }
+}
+
+/* Intercept Tailwind utility classes to override colors in Nile Midnight mode */
+.theme-nile {
+  /* Heading Gradient overrides in Nile Midnight mode */
+  .from-\[\#fbf5e6\] {
+    --tw-gradient-from: #e0f2fe !important;
+    --tw-gradient-stops: #e0f2fe, #38bdf8, #0369a1 !important;
+  }
+  .via-\[\#d4af37\] {
+    --tw-gradient-via: #38bdf8 !important;
+    --tw-gradient-stops: #e0f2fe, #38bdf8, #0369a1 !important;
+  }
+  .to-\[\#8e6b12\] {
+    --tw-gradient-to: #0369a1 !important;
+  }
+
+  /* 1. Background color overrides */
+  .bg-\[\#100c08\], 
+  .from-\[\#100c08\], 
+  .to-\[\#100c08\], 
+  .via-\[\#100c08\],
+  .bg-\[\#100c08\]\/60 {
+    background-color: var(--bg-deep) !important;
+  }
+  
+  .bg-\[\#140f0c\], 
+  .bg-\[\#140f0c\]\/90,
+  .from-\[\#140f0c\], 
+  .to-\[\#140f0c\], 
+  .via-\[\#140f0c\] {
+    background-color: var(--bg-base) !important;
+  }
+  
+  .bg-\[\#1c1611\], 
+  .from-\[\#1c1611\], 
+  .to-\[\#1c1611\], 
+  .via-\[\#1c1611\] {
+    background-color: var(--bg-surface) !important;
+  }
+  
+  .bg-\[\#241a10\], .bg-\[\#241a10\]\/60 {
+    background-color: var(--bg-card) !important;
+  }
+  
+  .bg-\[\#201a14\] {
+    background-color: var(--bg-input) !important;
+  }
+  
+  .bg-\[\#16120e\] {
+    background-color: var(--bg-textarea) !important;
+  }
+  
+  .bg-\[\#1a1511\], 
+  .bg-\[\#1c1510\], 
+  .bg-\[\#1a140f\], 
+  .bg-\[\#231a11\],
+  .bg-\[\#1a140f\]\/90 {
+    background-color: var(--bg-secondary) !important;
+  }
+
+  /* 2. Text color overrides */
+  .text-\[\#d4af37\] {
+    color: var(--brand-gold) !important;
+  }
+  .text-\[\#e6c280\] {
+    color: var(--brand-gold-light) !important;
+  }
+  .text-\[\#f3e5c8\] {
+    color: var(--brand-gold-bright) !important;
+  }
+  .text-\[\#8b6508\] {
+    color: var(--brand-gold-dark) !important;
+  }
+  .text-\[\#5c4001\] {
+    color: var(--brand-gold-deep) !important;
+  }
+  .text-\[\#1e1610\] {
+    color: var(--rune-color) !important;
+  }
+
+  /* 3. Background Accent & Button overrides */
+  .bg-\[\#d4af37\] {
+    background-color: var(--brand-gold) !important;
+  }
+  .bg-\[\#e6c280\] {
+    background-color: var(--brand-gold-light) !important;
+  }
+  .bg-\[\#f3e5c8\] {
+    background-color: var(--brand-gold-bright) !important;
+  }
+  .bg-\[\#8b6508\] {
+    background-color: var(--brand-gold-dark) !important;
+  }
+  
+  /* 4. Border overrides */
+  .border-\[\#d4af37\]\/10 {
+    border-color: color-mix(in srgb, var(--brand-gold) 10%, transparent) !important;
+  }
+  .border-\[\#d4af37\]\/15 {
+    border-color: color-mix(in srgb, var(--brand-gold) 15%, transparent) !important;
+  }
+  .border-\[\#d4af37\]\/20 {
+    border-color: color-mix(in srgb, var(--brand-gold) 20%, transparent) !important;
+  }
+  .border-\[\#d4af37\]\/25 {
+    border-color: color-mix(in srgb, var(--brand-gold) 25%, transparent) !important;
+  }
+  .border-\[\#d4af37\]\/30 {
+    border-color: color-mix(in srgb, var(--brand-gold) 30%, transparent) !important;
+  }
+  .border-\[\#d4af37\]\/40 {
+    border-color: color-mix(in srgb, var(--brand-gold) 40%, transparent) !important;
+  }
+  .border-\[\#d4af37\]\/45 {
+    border-color: color-mix(in srgb, var(--brand-gold) 45%, transparent) !important;
+  }
+  .border-\[\#d4af37\] {
+    border-color: var(--brand-gold) !important;
+  }
+  .border-\[\#e6c280\]\/10 {
+    border-color: color-mix(in srgb, var(--brand-gold-light) 10%, transparent) !important;
+  }
+  .border-\[\#8b6508\]\/15 {
+    border-color: color-mix(in srgb, var(--brand-gold-dark) 15%, transparent) !important;
+  }
+  .border-\[\#8b6508\]\/20 {
+    border-color: color-mix(in srgb, var(--brand-gold-dark) 20%, transparent) !important;
+  }
+  .border-\[\#8b6508\]\/25 {
+    border-color: color-mix(in srgb, var(--brand-gold-dark) 25%, transparent) !important;
+  }
+  .border-\[\#8b6508\] {
+    border-color: var(--brand-gold-dark) !important;
+  }
+
+  /* 5. Gradient overrides */
+  .from-\[\#d4af37\] {
+    --tw-gradient-from: var(--brand-gold) !important;
+    --tw-gradient-to: var(--brand-gold-dark) !important;
+    --tw-gradient-stops: var(--brand-gold), var(--brand-gold-dark) !important;
+  }
+  .to-\[\#b08e23\] {
+    --tw-gradient-to: var(--brand-gold-dark) !important;
+  }
+  .to-\[\#bca03b\] {
+    --tw-gradient-to: var(--brand-gold-dark) !important;
+  }
+  .from-\[\#f3e5c8\] {
+    --tw-gradient-from: var(--brand-gold-bright) !important;
+  }
+  .to-\[\#d4af37\] {
+    --tw-gradient-to: var(--brand-gold) !important;
+  }
+  .from-\[\#e2be4c\] {
+    --tw-gradient-from: var(--brand-gold-light) !important;
+  }
+  .to-\[\#cca73d\] {
+    --tw-gradient-to: var(--brand-gold-dark) !important;
+  }
+
+  /* Hero Gradient Overlays */
+  .from-\[\#100c08\]\/60 {
+    --tw-gradient-from: color-mix(in srgb, var(--bg-deep) 60%, transparent) !important;
+  }
+  .via-\[\#100c08\]\/30 {
+    --tw-gradient-via: color-mix(in srgb, var(--bg-deep) 30%, transparent) !important;
+  }
+  .to-\[\#100c08\] {
+    --tw-gradient-to: var(--bg-deep) !important;
+  }
+
+  /* Custom scrollbar matching */
+  ::-webkit-scrollbar-track {
+    background: var(--bg-deep) !important;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--brand-gold) 30%, transparent) !important;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--brand-gold) 60%, transparent) !important;
+  }
+
+  /* Extra details like highlights */
+  .shadow-\[\#d4af37\]\/25 {
+    --tw-shadow-color: color-mix(in srgb, var(--brand-gold) 25%, transparent) !important;
+  }
+  .shadow-\[\#d4af37\]\/15 {
+    --tw-shadow-color: color-mix(in srgb, var(--brand-gold) 15%, transparent) !important;
+  }
+}
+
+/* Custom active traveler stage tracker design styles */
+.admin-stage-tracker {
+  background: rgba(20, 15, 12, 0.65);
+  border-radius: 1rem;
+  padding: 1rem 1.5rem;
+  box-shadow: inset 0 0 15px rgba(212, 175, 55, 0.05);
+  border: 1.5px solid rgba(212, 175, 55, 0.15) !important;
+  animation: adminDesertPulse 4s ease-in-out infinite alternate;
+}
+
+#app-root.theme-nile .admin-stage-tracker {
+  background: rgba(5, 8, 18, 0.65) !important;
+  box-shadow: inset 0 0 15px rgba(56, 189, 248, 0.05) !important;
+  border: 1.5px solid rgba(56, 189, 248, 0.15) !important;
+  animation: adminNilePulse 4s ease-in-out infinite alternate !important;
+}
+
+@keyframes adminDesertPulse {
+  0% {
+    border-color: rgba(212, 175, 55, 0.12) !important;
+    box-shadow: inset 0 0 12px rgba(212, 175, 55, 0.03), 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+  100% {
+    border-color: rgba(212, 175, 55, 0.28) !important;
+    box-shadow: inset 0 0 20px rgba(212, 175, 55, 0.10), 0 4px 20px rgba(212, 175, 55, 0.05);
+  }
+}
+
+@keyframes adminNilePulse {
+  0% {
+    border-color: rgba(56, 189, 248, 0.12) !important;
+    box-shadow: inset 0 0 12px rgba(56, 189, 248, 0.03), 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+  100% {
+    border-color: rgba(56, 189, 248, 0.28) !important;
+    box-shadow: inset 0 0 20px rgba(56, 189, 248, 0.10), 0 4px 20px rgba(56, 189, 248, 0.05);
+  }
+}
+
+/* Subtle Desert Mirage Heat Distortion removed for scrolling performance optimization */
+
+
+
