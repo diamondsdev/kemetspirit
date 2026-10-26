@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Sparkles, Calendar, Compass, User, Zap, Send, MessageCircle, HelpCircle, Loader2, BookOpen, Printer, X, CheckSquare, Square, Copy, Check } from 'lucide-react';
 import { Booking, CustomItinerary, ScribeMessage, Excursion } from '../types';
 import { useLanguage } from './LanguageContext';
-import { getAccessToken } from '../lib/firebaseAuth';
 
 interface ScribeOracleProps {
   onScribeSuccess?: () => void;
@@ -1003,7 +1002,7 @@ export default function ScribeOracle({ onScribeSuccess, onAddBooking, bookings =
         text: m.text
       }));
 
-      const token = await getAccessToken();
+      const token = localStorage.getItem('kemet_session_token') || localStorage.getItem('kemet_admin_token') || '';
 
       const response = await fetch('/api/scribe-chat', {
         method: 'POST',
@@ -1107,7 +1106,7 @@ export default function ScribeOracle({ onScribeSuccess, onAddBooking, bookings =
         text: m.text
       }));
 
-      const token = await getAccessToken();
+      const token = localStorage.getItem('kemet_session_token') || localStorage.getItem('kemet_admin_token') || '';
 
       const response = await fetch('/api/scribe-chat', {
         method: 'POST',

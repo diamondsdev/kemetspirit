@@ -33,6 +33,13 @@ export default function LoginPage({ onLoginSuccess, onNavigate }: LoginPageProps
       }
 
       localStorage.setItem('kemet_user', JSON.stringify(data.user));
+      if (data.token) {
+        localStorage.setItem('kemet_session_token', data.token);
+        localStorage.setItem('kemet_admin_token', data.token);
+        if (data.user?.role && data.user.role !== 'traveler') {
+          localStorage.setItem('kemet_admin_verified', 'true');
+        }
+      }
       onLoginSuccess(data.user);
       onNavigate('profile');
     } catch (err: any) {

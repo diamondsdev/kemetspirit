@@ -42,6 +42,9 @@ export default function RegisterPage({ onLoginSuccess, onNavigate }: RegisterPag
       }
 
       localStorage.setItem('kemet_user', JSON.stringify(data.user));
+      if (data.token) {
+        localStorage.setItem('kemet_session_token', data.token);
+      }
       onLoginSuccess(data.user);
       onNavigate('profile');
     } catch (err: any) {

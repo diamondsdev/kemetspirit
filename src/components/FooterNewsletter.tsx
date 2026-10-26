@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Mail, Sparkles, X, Ticket, Compass, ChevronRight, Check, AlertCircle, Send } from 'lucide-react';
 import { useLanguage } from './LanguageContext';
-import { getAccessToken } from '../lib/firebaseAuth';
 
 interface Subscriber {
   id: string;
@@ -83,7 +82,7 @@ export default function FooterNewsletter() {
     const trimmedEmail = email.trim().toLowerCase();
 
     try {
-      const accessToken = await getAccessToken();
+      const accessToken = localStorage.getItem('kemet_session_token') || undefined;
       const res = await fetch('/api/newsletter', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

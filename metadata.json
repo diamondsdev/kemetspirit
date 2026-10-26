@@ -1,6 +1,10 @@
 {
-  "name": "Kemet Tours - Powered by Mas international Agency",
-  "description": "An immersive Pharaonic-themed travel and excursion planner for the Red Sea, Egypt. Explore coral reefs, desert safaris, and ancient historical trips with custom golden styling, a hieroglyphic cartouche generator, and an AI Scribe itinerary builder.",
-  "requestFramePermissions": ["camera"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "name": "Kemet Tours - Powered by Mas International Agency",
+  "description": "Authoritative Egypt excursions platform and operational command dashboard backed by Supabase PostgreSQL. Features real-time bookings, QR check-in ticketing, traveler CRM, dynamic pricing, and an AI Scribe itinerary oracle.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

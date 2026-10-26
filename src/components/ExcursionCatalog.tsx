@@ -5,7 +5,6 @@ import { Excursion, Booking } from '../types';
 import { useLanguage } from './LanguageContext';
 import ReviewSystem from './ReviewSystem';
 import PromotionalBanner from './PromotionalBanner';
-import { getAccessToken, googleSignIn } from '../lib/firebaseAuth';
 
 // Let's use our exact generated image paths!
 export const EXCURSIONS_DATA: Excursion[] = [
@@ -699,49 +698,24 @@ export default function ExcursionCatalog({ onAddBooking, excursions, onRequestAu
   const [isComparisonMode, setIsComparisonMode] = useState<boolean>(false);
   const [selectedCompareIds, setSelectedCompareIds] = useState<string[]>([]);
 
-  // Google Sheet Sync State
-  const [isSyncingSheet, setIsSyncingSheet] = useState<boolean>(false);
-  const [syncSheetMessage, setSyncSheetMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-  const performAutoSyncGoogleSheet = React.useCallback(async () => {
-    setIsSyncingSheet(true);
-    try {
-      let token = await getAccessToken().catch(() => null);
-
-      const res = await fetch('/api/excursions/fetch-google-sheet', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({
-          spreadsheetId: '1Ms9LU8f20q3wX5fNaw8JqkIbB_QlDmeAN8ZEIdTFKKc',
-          accessToken: token || ''
-        })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && Array.isArray(data.excursions) && data.excursions.length > 0) {
-          localStorage.setItem('kemet_excursions', JSON.stringify(data.excursions));
-          window.dispatchEvent(new Event('kemet_excursions_updated'));
-        }
-      }
-    } catch (err: any) {
-      console.warn("Silent background Google Sheet auto-sync notice:", err);
-    } finally {
-      setIsSyncingSheet(false);
-    }
-  }, []);
-
-  // Run Auto-Sync on mount & periodically
+  // Authoritative catalogue loader
   useEffect(() => {
-    performAutoSyncGoogleSheet();
-    const interval = setInterval(() => {
-      performAutoSyncGoogleSheet();
-    }, 45000); // Auto sync every 45 seconds
-    return () => clearInterval(interval);
-  }, [performAutoSyncGoogleSheet]);
+    const fetchTours = async () => {
+      try {
+        const res = await fetch('/api/tours');
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            localStorage.setItem('kemet_excursions', JSON.stringify(data));
+            window.dispatchEvent(new Event('kemet_excursions_updated'));
+          }
+        }
+      } catch (err) {
+        console.warn('Authoritative tours fetch:', err);
+      }
+    };
+    fetchTours();
+  }, []);
 
   const handleToggleCompare = (exId: string) => {
     setSelectedCompareIds(prev => {
@@ -1187,32 +1161,7 @@ Please seal my booking with the High Priest approval!`;
         </div>
       </div>
 
-      {/* Sync Status Banner */}
-      <AnimatePresence>
-        {syncSheetMessage && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className={`p-4 rounded-xl border text-xs font-mono flex items-center justify-between ${
-              syncSheetMessage.type === 'success'
-                ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
-                : 'bg-amber-950/40 border-amber-500/40 text-amber-300'
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-[#d4af37]" />
-              <span>{syncSheetMessage.text}</span>
-            </div>
-            <button 
-              onClick={() => setSyncSheetMessage(null)}
-              className="text-stone-400 hover:text-white p-1"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+
 
       {/* Comparison Board Panel */}
       <AnimatePresence>

@@ -7,16 +7,12 @@ import BookingManager from './components/BookingManager';
 import FooterNewsletter from './components/FooterNewsletter';
 import OraclesWisdomFAQ from './components/OraclesWisdomFAQ';
 import MobileBottomNav from './components/MobileBottomNav';
-import ScarabCelebration from './components/ScarabCelebration';
-import PapyrusScrollCelebration from './components/PapyrusScrollCelebration';
 import SEOMetadataManager from './components/SEOMetadataManager';
 import CookieConsentManager from './components/CookieConsentManager';
 import SEOHelper from './components/SEOHelper';
 import { useLanguage } from './components/LanguageContext';
-import { getAccessToken } from './lib/firebaseAuth';
 
 // Lazy loaded heavy components for optimal page load speed
-const CartoucheGenerator = lazy(() => import('./components/CartoucheGenerator'));
 const ScribeOracle = lazy(() => import('./components/ScribeOracle'));
 const EgyptologyGallery = lazy(() => import('./components/EgyptologyGallery'));
 const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
@@ -90,59 +86,34 @@ export default function App() {
     return () => window.removeEventListener('click', handleOutsideClick);
   }, [isLangDropdownOpen]);
 
-  // Fetch excursion data directly from Google Sheet on application load
-  const fetchExcursionsFromGoogleSheet = async () => {
+  // Fetch excursion data from authoritative server repository
+  const loadAuthoritativeTours = async () => {
     try {
-      const token = await getAccessToken();
-      const res = await fetch('/api/excursions/fetch-google-sheet', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({
-          accessToken: token || ''
-        })
-      });
+      const res = await fetch('/api/tours');
       if (res.ok) {
         const data = await res.json();
-        if (data.excursions && Array.isArray(data.excursions) && data.excursions.length > 0) {
-          setExcursions(data.excursions);
-          localStorage.setItem('kemet_excursions', JSON.stringify(data.excursions));
+        if (Array.isArray(data) && data.length > 0) {
+          setExcursions(data);
+          localStorage.setItem('kemet_excursions', JSON.stringify(data));
           window.dispatchEvent(new Event('kemet_excursions_updated'));
-          return;
         }
       }
     } catch (err) {
-      console.warn("Direct Google Sheet fetch failed on load, falling back to server registry:", err);
-    }
-
-    try {
-      const resEx = await fetch('/api/excursions');
-      if (resEx.ok) {
-        const exData = await resEx.json();
-        setExcursions(exData);
-        localStorage.setItem('kemet_excursions', JSON.stringify(exData));
-        window.dispatchEvent(new Event('kemet_excursions_updated'));
-      }
-    } catch (err) {
-      console.error("Failed to load excursions from sacred server registry:", err);
+      console.warn("Authoritative tours fetch:", err);
     }
   };
 
-  // Sync with Google Sheets and secure server database on mount and when admin status changes
+  // Sync with authoritative backend on mount and when admin status changes
   useEffect(() => {
-    fetchExcursionsFromGoogleSheet();
+    loadAuthoritativeTours();
 
     if (isAdminVerified) {
       const loadAdminBookings = async () => {
-        const passcode = localStorage.getItem('kemet_admin_passcode') || 'pharaoh';
-        const adminToken = localStorage.getItem('kemet_admin_token') || '';
+        const token = localStorage.getItem('kemet_session_token') || localStorage.getItem('kemet_admin_token') || '';
         try {
-          const resBk = await fetch('/api/bookings', {
+          const resBk = await fetch('/api/admin/bookings', {
             headers: {
-              'x-admin-passcode': passcode,
-              'x-admin-token': adminToken
+              ...(token ? { 'Authorization': `Bearer ${token}` } : {})
             }
           });
           if (resBk.ok) {
@@ -151,8 +122,8 @@ export default function App() {
             localStorage.setItem('kemet_bookings', JSON.stringify(bkData));
           } else if (resBk.status === 401 || resBk.status === 403) {
             localStorage.removeItem('kemet_admin_verified');
+            localStorage.removeItem('kemet_session_token');
             localStorage.removeItem('kemet_admin_token');
-            localStorage.removeItem('kemet_admin_passcode');
             setIsAdminVerified(false);
           }
         } catch (err) {
@@ -344,7 +315,7 @@ export default function App() {
   // Handle adding a new booking from the catalog
   const handleAddBooking = async (newBooking: Booking) => {
     try {
-      const token = await getAccessToken();
+      const token = localStorage.getItem('kemet_session_token') || '';
       const response = await fetch('/api/bookings', {
         method: 'POST',
         headers: {
@@ -352,19 +323,34 @@ export default function App() {
           ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
         body: JSON.stringify({
-          ...newBooking,
-          accessToken: token || ''
+          tour_id: newBooking.excursionId,
+          scheduled_date: newBooking.date,
+          traveler_name: newBooking.travelerName,
+          traveler_email: newBooking.travelerEmail,
+          phone_number: newBooking.phoneNumber,
+          whatsapp_number: newBooking.whatsappNumber,
+          hotel_name: newBooking.hotelName,
+          room_number: newBooking.roomNumber,
+          pickup_location: newBooking.hotelName || 'Hotel Lobby',
+          guest_count: newBooking.numberOfGuests,
+          promo_code: newBooking.promoCodeUsed,
+          special_requests: newBooking.specialRequests
         })
       });
       if (response.ok) {
-        const savedBooking = await response.json();
-        setBookings(prev => [savedBooking, ...prev]);
-        setNewlyCreatedBooking(savedBooking);
+        const result = await response.json();
+        const created = result.booking || {
+          ...newBooking,
+          id: result.booking_id || newBooking.id,
+          booking_reference: result.booking_reference,
+          totalCost: result.total_cost || newBooking.totalCost
+        };
+        setBookings(prev => [created, ...prev]);
+        setNewlyCreatedBooking(created);
         triggerCelebration();
       } else {
         const errData = await response.json();
         console.error(errData.error || "Failed to submit booking to server.");
-        // Fallback to local memory
         setBookings(prev => [newBooking, ...prev]);
         setNewlyCreatedBooking(newBooking);
         triggerCelebration();
@@ -379,43 +365,36 @@ export default function App() {
 
   // Handle cancelling/revoking a pending booking
   const handleCancelBooking = async (bookingId: string) => {
-    const passcode = localStorage.getItem('kemet_admin_passcode') || 'pharaoh';
-    const adminToken = localStorage.getItem('kemet_admin_token') || '';
+    const token = localStorage.getItem('kemet_session_token') || localStorage.getItem('kemet_admin_token') || '';
     try {
-      const response = await fetch(`/api/bookings/${bookingId}`, {
-        method: 'DELETE',
+      const response = await fetch(`/api/admin/bookings/${bookingId}/status`, {
+        method: 'PUT',
         headers: {
-          'x-admin-passcode': passcode,
-          'x-admin-token': adminToken
-        }
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ status: 'cancelled' })
       });
       if (response.ok) {
-        setBookings(prev => prev.filter(b => b.id !== bookingId));
-      } else {
-        setBookings(prev => prev.filter(b => b.id !== bookingId));
+        setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: 'cancelled' } : b));
       }
     } catch (err) {
       console.error("Failed to cancel booking on server:", err);
-      setBookings(prev => prev.filter(b => b.id !== bookingId));
     }
   };
 
   const handleUpdateBookingStatus = async (id: string, status: Booking['status']) => {
-    const passcode = localStorage.getItem('kemet_admin_passcode') || 'pharaoh';
-    const adminToken = localStorage.getItem('kemet_admin_token') || '';
+    const token = localStorage.getItem('kemet_session_token') || localStorage.getItem('kemet_admin_token') || '';
     try {
-      const response = await fetch(`/api/bookings/${id}/status`, {
+      const response = await fetch(`/api/admin/bookings/${id}/status`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'x-admin-passcode': passcode,
-          'x-admin-token': adminToken
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
         body: JSON.stringify({ status })
       });
       if (response.ok) {
-        setBookings(prev => prev.map(b => b.id === id ? { ...b, status } : b));
-      } else {
         setBookings(prev => prev.map(b => b.id === id ? { ...b, status } : b));
       }
     } catch (err) {
@@ -424,30 +403,37 @@ export default function App() {
     }
   };
 
-  // High Priest Admin Authentication Handler
+  // High Priest Staff Authentication State & Handler
+  const [adminEmailInput, setAdminEmailInput] = useState<string>('admin@kemetspirit.com');
+  const [adminPasswordInput, setAdminPasswordInput] = useState<string>('');
+
   const handleAdminLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setPasscodeError('');
     try {
-      const res = await fetch('/api/admin/verify', {
+      const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ passcode: passcodeInput })
+        body: JSON.stringify({ email: adminEmailInput, password: adminPasswordInput })
       });
       const data = await res.json();
       if (res.ok && data.success) {
         localStorage.setItem('kemet_admin_verified', 'true');
-        localStorage.setItem('kemet_admin_passcode', passcodeInput);
         if (data.token) {
+          localStorage.setItem('kemet_session_token', data.token);
           localStorage.setItem('kemet_admin_token', data.token);
         }
+        if (data.user) {
+          localStorage.setItem('kemet_user', JSON.stringify(data.user));
+          setCurrentUser(data.user);
+        }
         setIsAdminVerified(true);
-        setPasscodeInput('');
+        setAdminPasswordInput('');
       } else {
-        setPasscodeError(data.error || 'Incorrect passcode. Access is restricted to the High Priest.');
+        setPasscodeError(data.error || 'Authentication rejected. Access is restricted to authorized staff.');
       }
     } catch (err: any) {
-      setPasscodeError('Verification server unavailable. Please try again.');
+      setPasscodeError('Authentication server unavailable. Please try again.');
     }
   };
 
@@ -456,23 +442,21 @@ export default function App() {
   };
 
   const handleVerifyCheckIn = async (bookingId: string) => {
+    const token = localStorage.getItem('kemet_session_token') || localStorage.getItem('kemet_admin_token') || '';
     try {
-      const response = await fetch(`/api/bookings/${bookingId}/checkin`, {
+      const response = await fetch('/api/admin/bookings/check-in', {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ code: bookingId })
       });
       if (response.ok) {
-        const data = await response.json();
-        if (data.bookings) {
-          setBookings(data.bookings);
-        } else {
-          setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: 'Completed', checkedIn: true } : b));
-        }
-      } else {
-        setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: 'Completed', checkedIn: true } : b));
+        setBookings(prev => prev.map(b => b.id === bookingId || b.booking_reference === bookingId ? { ...b, status: 'completed', checkedIn: true, checked_in: true } : b));
       }
     } catch (err) {
-      console.error("Failed to sync check-in with server, checking in locally:", err);
-      setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: 'Completed', checkedIn: true } : b));
+      console.error("Failed to verify check-in on server:", err);
     }
   };
 
@@ -731,7 +715,6 @@ export default function App() {
                   { label: t('nav_map', '𓉶 Ancient Map'), id: 'map', target: 'map-section' },
                   { label: t('nav_ai_planner', '𓋹 AI Travel Planner'), id: 'scribe', target: 'scribe-section' },
                   { label: t('nav_gallery', '𓅓 Photo Gallery'), id: 'gallery', target: 'gallery-section' },
-                  { label: t('nav_cartouche', '𓉐 Name Translator'), id: 'cartouche', target: 'cartouche-section' },
                   { label: t('nav_faq', '𓇚 Questions & Answers'), id: 'faq', target: 'faq-section' },
                   { label: t('nav_bookings', '𓎬 My Bookings'), id: 'bookings', target: 'ledger-section' }
                 ].map((item) => {
@@ -955,28 +938,6 @@ export default function App() {
                 </motion.div>
               )}
 
-              {activePage === 'cartouche' && (
-                <motion.div
-                  key="cartouche"
-                  id="cartouche-section"
-                  initial={{ opacity: 0, y: 30, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -20, scale: 0.98 }}
-                  transition={{ duration: 0.45, ease: 'easeOut' }}
-                  className="space-y-8 scroll-mt-28"
-                >
-                  <div className="text-center">
-                    <span className="text-xs font-mono text-[#d4af37] uppercase tracking-[0.25em]">{language === 'de' ? 'Ägyptische Kartusche' : language === 'pl' ? 'Egipska kartusza' : language === 'cs' ? 'Egyptská kartuše' : 'Egyptian Cartouche'}</span>
-                    <h2 className="font-serif text-3xl font-extrabold text-[#e6c280] uppercase mt-1">
-                      {language === 'de' ? 'Ägyptischer Namensübersetzer' : language === 'pl' ? 'Tłumacz egipskich imion' : language === 'cs' ? 'Překladač egyptských jmen' : 'Egyptian Name Translator'}
-                    </h2>
-                    <p className="text-stone-400 text-sm max-w-xl mx-auto mt-2">
-                      {language === 'de' ? 'Übersetzen Sie Ihren Namen in altägyptische Hieroglyphensymbole in einer wunderschönen schützenden Kartusche.' : language === 'pl' ? 'Przetłumacz swoje imię na starożytne egipskie hieroglify wewnątrz pięknej, ochronnej kartuszy.' : language === 'cs' ? 'Přeložte své jméno do starověkých egyptských hieroglyfů uvnitř krásné ochranné kartuše.' : 'Translate your name into ancient Egyptian hieroglyphic symbols inside a beautiful protective cartouche.'}
-                    </p>
-                  </div>
-                  <CartoucheGenerator />
-                </motion.div>
-              )}
 
               {activePage === 'faq' && (
                 <motion.div
@@ -1093,20 +1054,34 @@ export default function App() {
                         <span className="text-[10px] font-mono text-[#d4af37] uppercase tracking-[0.25em]">Protected Area</span>
                         <h2 className="font-serif text-2xl font-black text-[#e6c280] uppercase tracking-wider">High Priest Sanctuary</h2>
                         <p className="text-stone-400 text-xs leading-relaxed">
-                          This portal is restricted to High Priests and Scribe Administrators. Enter your secret passcode to access live ledgers, CRM, and spreadsheet controls.
+                          Secure staff portal for Tour Managers, Dispatchers, and Administrators. Sign in with your verified operational credentials.
                         </p>
                       </div>
 
                       <form onSubmit={handleAdminLoginSubmit} className="space-y-4 text-left">
                         <div>
                           <label className="block text-[10px] font-mono uppercase tracking-widest text-[#d4af37] mb-1.5">
-                            Passcode / Key
+                            Staff Email
+                          </label>
+                          <input
+                            type="email"
+                            value={adminEmailInput}
+                            onChange={(e) => setAdminEmailInput(e.target.value)}
+                            placeholder="admin@kemetspirit.com"
+                            className="w-full bg-[#0c0907] border border-[#d4af37]/40 rounded-xl px-4 py-3 text-stone-200 text-sm font-mono focus:outline-none focus:border-[#d4af37]"
+                            required
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-mono uppercase tracking-widest text-[#d4af37] mb-1.5">
+                            Security Key / Password
                           </label>
                           <input
                             type="password"
-                            value={passcodeInput}
-                            onChange={(e) => setPasscodeInput(e.target.value)}
-                            placeholder="Enter High Priest passcode (e.g. pharaoh)"
+                            value={adminPasswordInput}
+                            onChange={(e) => setAdminPasswordInput(e.target.value)}
+                            placeholder="••••••••••••"
                             className="w-full bg-[#0c0907] border border-[#d4af37]/40 rounded-xl px-4 py-3 text-stone-200 text-sm font-mono focus:outline-none focus:border-[#d4af37]"
                             required
                           />
@@ -1122,17 +1097,51 @@ export default function App() {
                           type="submit"
                           className="w-full bg-gradient-to-r from-[#d4af37] to-[#b08e23] hover:from-[#f3e5c8] hover:to-[#d4af37] text-[#140f0a] font-serif font-black text-xs uppercase tracking-widest py-3.5 rounded-xl shadow-lg transition-all cursor-pointer"
                         >
-                          Unlock Sanctuary
+                          Authenticate & Enter
                         </button>
+
+                        <div className="pt-2 text-center">
+                          <p className="text-[11px] text-stone-400">
+                            First-time initial setup?{' '}
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const secret = prompt("Enter SETUP_SECRET (or default 'kemet_admin_secret_2026'):");
+                                if (!secret) return;
+                                try {
+                                  const res = await fetch('/api/auth/provision-owner', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                      email: adminEmailInput || 'admin@kemetspirit.com',
+                                      password: adminPasswordInput || 'KemetAdmin2026!',
+                                      fullName: 'High Priest Commander',
+                                      secret
+                                    })
+                                  });
+                                  const data = await res.json();
+                                  alert(data.message || (data.success ? "Admin owner account provisioned!" : data.error));
+                                } catch (e: any) {
+                                  alert("Error contacting server: " + e.message);
+                                }
+                              }}
+                              className="text-[#d4af37] underline hover:text-[#f3e5c8] cursor-pointer"
+                            >
+                              Initialize Owner Account
+                            </button>
+                          </p>
+                        </div>
                       </form>
                     </div>
                   ) : (
                     <AdminDashboard
-                      bookings={bookings}
-                      onUpdateBookingStatus={handleUpdateBookingStatus}
-                      onCancelBooking={handleCancelBooking}
-                      onUpdateBookingsList={handleUpdateBookingsList}
-                      onVerifyCheckIn={handleVerifyCheckIn}
+                      onLogout={() => {
+                        localStorage.removeItem('kemet_admin_verified');
+                        localStorage.removeItem('kemet_session_token');
+                        localStorage.removeItem('kemet_admin_token');
+                        setIsAdminVerified(false);
+                      }}
+                      currentUser={currentUser}
                     />
                   )}
                 </motion.div>
@@ -1345,16 +1354,72 @@ export default function App() {
           </motion.button>
         </div>
 
-        {/* Golden Scarab Particle Celebration Overlay */}
-        <ScarabCelebration triggerCount={celebrationCount} />
-
-        {/* Papyrus Scroll Unrolling Celebration Overlay */}
+        {/* Authoritative Booking Confirmation Modal */}
         <AnimatePresence>
           {newlyCreatedBooking && (
-            <PapyrusScrollCelebration
-              booking={newlyCreatedBooking}
-              onClose={() => setNewlyCreatedBooking(null)}
-            />
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[150] flex items-center justify-center p-4">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="bg-[#140f0c] border-2 border-[#d4af37] rounded-3xl p-6 md:p-8 max-w-lg w-full shadow-[0_0_50px_rgba(212,175,55,0.25)] text-center relative overflow-hidden"
+              >
+                <div className="w-16 h-16 rounded-full bg-[#d4af37]/10 border border-[#d4af37]/40 flex items-center justify-center mx-auto text-3xl text-[#d4af37] mb-4">
+                  𓋹
+                </div>
+
+                <span className="text-[10px] font-mono text-[#d4af37] uppercase tracking-[0.25em] block mb-1">
+                  Royal Decree Confirmed
+                </span>
+                <h3 className="font-serif text-2xl font-black text-[#e6c280] uppercase tracking-wide mb-2">
+                  Reservation Received
+                </h3>
+                <p className="text-stone-300 text-xs mb-4">
+                  May Ra smile upon your journey, <strong className="text-[#f3e5c8]">{newlyCreatedBooking.travelerName}</strong>. Your excursion has been recorded into the authoritative temple registry.
+                </p>
+
+                <div className="bg-[#0c0907] border border-[#d4af37]/30 rounded-2xl p-4 text-left space-y-2 mb-6 font-mono text-xs">
+                  <div className="flex justify-between items-center border-b border-stone-800 pb-2">
+                    <span className="text-stone-400">Reference:</span>
+                    <span className="text-[#d4af37] font-bold">{newlyCreatedBooking.booking_reference || newlyCreatedBooking.id}</span>
+                  </div>
+                  <div className="flex justify-between items-center border-b border-stone-800 pb-2">
+                    <span className="text-stone-400">Excursion:</span>
+                    <span className="text-stone-200">{newlyCreatedBooking.excursionTitle}</span>
+                  </div>
+                  <div className="flex justify-between items-center border-b border-stone-800 pb-2">
+                    <span className="text-stone-400">Date:</span>
+                    <span className="text-stone-200">{newlyCreatedBooking.date}</span>
+                  </div>
+                  <div className="flex justify-between items-center border-b border-stone-800 pb-2">
+                    <span className="text-stone-400">Guests:</span>
+                    <span className="text-stone-200">{newlyCreatedBooking.numberOfGuests}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-stone-400">Status / Balance:</span>
+                    <span className="text-emerald-400 font-bold">${newlyCreatedBooking.totalCost} (Cash upon pickup / Verified at check-in)</span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <button
+                    onClick={() => {
+                      setNewlyCreatedBooking(null);
+                      scrollToSection('ledger-section');
+                    }}
+                    className="flex-1 bg-gradient-to-r from-[#d4af37] to-[#b08e23] hover:from-[#f3e5c8] hover:to-[#d4af37] text-[#140f0a] font-serif font-black text-xs uppercase tracking-widest py-3 rounded-xl shadow-lg transition-all cursor-pointer"
+                  >
+                    View in Bookings Ledger
+                  </button>
+                  <button
+                    onClick={() => setNewlyCreatedBooking(null)}
+                    className="px-6 py-3 border border-stone-700 hover:border-[#d4af37] text-stone-300 font-mono text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
+              </motion.div>
+            </div>
           )}
         </AnimatePresence>
 
