@@ -5,14 +5,32 @@ import {
   getSupabaseServer, 
   isServerSupabaseConfigured,
   fallbackStore, 
+  checkIfOwnerExists,
+  provisionOwnerAtomic,
   fetchPublishedTours, 
   fetchAllToursAdmin, 
   upsertTour, 
   deleteTourById, 
   createAuthoritativeBooking, 
   fetchBookingsAdmin, 
+  fetchUserBookings,
   updateBookingStatusRecord, 
-  checkInTicket 
+  checkInTicket,
+  fetchFinanceOverview,
+  recordFinancialTransaction,
+  submitInquiry,
+  fetchInquiriesAdmin,
+  updateInquiryStatus,
+  fetchApprovedReviews,
+  fetchAllReviewsAdmin,
+  submitReview,
+  moderateReview,
+  subscribeNewsletter,
+  fetchSubscribersAdmin,
+  fetchSettings,
+  updateSettings,
+  recordAuditLog,
+  fetchAuditLogsAdmin
 } from '../supabaseServer';
 import { 
   authenticateToken, 
@@ -23,16 +41,18 @@ import {
   revokeSession, 
   AuthenticatedRequest 
 } from '../middleware/auth';
+import { authRateLimiter, setupRateLimiter } from '../middleware/rateLimiter';
 import { UserRole } from '../../src/types/supabase';
 
 export const apiRouter = express.Router();
 
+// Apply token authentication across all API routes
 apiRouter.use(authenticateToken);
 
 // ============================================================================
 // HEALTH & STATUS CHECK
 // ============================================================================
-apiRouter.get('/health', (req, res) => {
+apiRouter.get('/health', (req: Request, res: Response) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
@@ -43,117 +63,66 @@ apiRouter.get('/health', (req, res) => {
 });
 
 // ============================================================================
-// AUTHENTICATION & PROVISIONING
+// OWNER PROVISIONING & AUTHENTICATION
 // ============================================================================
 
 /**
  * Controlled Initial Owner Provisioning:
- * Only permitted if no owner exists yet, or with an explicit SETUP_SECRET from env.
+ * Only permitted if NO owner exists yet, and requires a valid SETUP_SECRET from env.
+ * Protected with dedicated rate-limiting and atomic in-flight mutex.
  */
-apiRouter.post('/auth/provision-owner', async (req: Request, res: Response) => {
+apiRouter.post('/auth/provision-owner', setupRateLimiter, async (req: Request, res: Response) => {
   try {
     const { email, password, fullName, setupSecret } = req.body;
-    if (!email || !password || !fullName) {
-      return res.status(400).json({ error: 'Email, password, and full name are required.' });
+    if (!email || !password || !fullName || !setupSecret) {
+      return res.status(400).json({ error: 'Email, password, full name, and setupSecret are required.' });
     }
 
-    const expectedSecret = process.env.SETUP_SECRET;
-    const existingStaff = fallbackStore.staffUsers.find(u => u.role === 'owner');
-
-    if (existingStaff && expectedSecret && setupSecret !== expectedSecret) {
-      return res.status(403).json({ error: 'An owner already exists. Valid setup secret required.' });
+    if (typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters long.' });
     }
 
-    const supabase = getSupabaseServer();
-    let userId = `usr-owner-${Date.now()}`;
-
-    if (supabase) {
-      try {
-        const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-          email,
-          password,
-          email_confirm: true,
-          user_metadata: { full_name: fullName }
-        });
-
-        if (authError) {
-          return res.status(400).json({ error: authError.message });
-        }
-
-        if (authData?.user) {
-          userId = authData.user.id;
-          await (supabase.from('profiles') as any).upsert({
-            id: userId,
-            email,
-            full_name: fullName,
-            role: 'owner',
-            vip_tier: 'Pharaoh',
-            lead_status: 'Royal Owner'
-          });
-        }
-      } catch (sbErr: any) {
-        console.warn('[Supabase] Owner provisioning warning, using local register:', sbErr.message);
-      }
-    }
-
-    const salt = crypto.randomBytes(16).toString('hex');
-    const hash = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
-    const ownerUser = {
-      id: userId,
+    const result = await provisionOwnerAtomic({
       email,
+      password,
       fullName,
-      role: 'owner' as UserRole,
-      passwordHash: hash,
-      passwordSalt: salt,
-      createdAt: new Date().toISOString()
-    };
-
-    fallbackStore.staffUsers.push(ownerUser);
+      setupSecret,
+      ipAddress: req.ip
+    });
 
     const token = `kemet-session-${crypto.randomBytes(32).toString('hex')}`;
-    const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000;
     registerSession({
       token,
-      userId: ownerUser.id,
-      email: ownerUser.email,
+      userId: result.userId,
+      email: result.email,
       role: 'owner',
-      fullName: ownerUser.fullName,
-      expiresAt
+      fullName: result.fullName,
+      expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000
     });
 
-    fallbackStore.auditLogs.unshift({
-      id: `log-${Date.now()}`,
-      actor_email: email,
-      actor_role: 'owner',
-      action: 'OWNER_PROVISIONED',
-      entity_type: 'staff',
-      entity_id: userId,
-      ip_address: req.ip || '127.0.0.1',
-      status: 'SUCCESS',
-      details: 'Initial Royal Sanctuary Owner account securely provisioned.',
-      created_at: new Date().toISOString()
-    });
-
-    res.json({
+    res.status(201).json({
       success: true,
       message: 'Royal Sanctuary Owner successfully provisioned.',
       token,
       user: {
-        id: userId,
-        email,
-        fullName,
+        id: result.userId,
+        email: result.email,
+        fullName: result.fullName,
         role: 'owner'
       }
     });
   } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Owner provisioning failed.' });
+    const status = err.message.includes('permanently closed') || err.message.includes('Invalid setup secret') ? 403 : 400;
+    res.status(status).json({ error: err.message || 'Owner provisioning failed.' });
   }
 });
 
 /**
  * Staff and Traveler Login
+ * Verifies credentials authoritatively against Supabase Auth or local hash store.
+ * Backdoor and auto-admin escalation patterns have been strictly removed.
  */
-apiRouter.post('/auth/login', async (req: Request, res: Response) => {
+apiRouter.post('/auth/login', authRateLimiter, async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
@@ -163,7 +132,7 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
     const cleanEmail = email.trim().toLowerCase();
     const supabase = getSupabaseServer();
 
-    // 1. Try Supabase Auth
+    // 1. Authoritative Supabase Auth Verification
     if (supabase) {
       try {
         const { data, error } = await supabase.auth.signInWithPassword({
@@ -180,6 +149,7 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
 
           const profileData = profile as any;
           const role = (profileData?.role as UserRole) || 'traveler';
+
           return res.json({
             success: true,
             token: data.session.access_token,
@@ -192,74 +162,42 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
           });
         }
       } catch (sbErr) {
-        // Fall back to local check
-      }
-    }
-
-    // 2. Local Fallback Verification
-    const staff = fallbackStore.staffUsers.find(u => u.email.toLowerCase() === cleanEmail);
-    if (staff) {
-      const hash = crypto.pbkdf2Sync(password, staff.passwordSalt, 10000, 64, 'sha512').toString('hex');
-      if (hash === staff.passwordHash) {
-        const token = `kemet-session-${crypto.randomBytes(32).toString('hex')}`;
-        const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000;
-        registerSession({
-          token,
-          userId: staff.id,
-          email: staff.email,
-          role: staff.role,
-          fullName: staff.fullName,
-          expiresAt
-        });
-
-        return res.json({
-          success: true,
-          token,
-          user: {
-            id: staff.id,
-            email: staff.email,
-            fullName: staff.fullName,
-            role: staff.role
-          }
-        });
-      }
-    }
-
-    // 3. Demo Admin Provisioning Fallback (If no staff registered yet and admin logs in)
-    if (fallbackStore.staffUsers.length === 0 && cleanEmail.includes('admin')) {
-      const salt = crypto.randomBytes(16).toString('hex');
-      const hash = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
-      const newAdmin = {
-        id: `usr-admin-${Date.now()}`,
-        email: cleanEmail,
-        fullName: 'High Priest Administrator',
-        role: 'owner' as UserRole,
-        passwordHash: hash,
-        passwordSalt: salt,
-        createdAt: new Date().toISOString()
-      };
-      fallbackStore.staffUsers.push(newAdmin);
-
-      const token = `kemet-session-${crypto.randomBytes(32).toString('hex')}`;
-      registerSession({
-        token,
-        userId: newAdmin.id,
-        email: newAdmin.email,
-        role: 'owner',
-        fullName: newAdmin.fullName,
-        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000
-      });
-
-      return res.json({
-        success: true,
-        token,
-        user: {
-          id: newAdmin.id,
-          email: newAdmin.email,
-          fullName: newAdmin.fullName,
-          role: 'owner'
+        // Continue to check local dev store only if non-production
+        if (process.env.NODE_ENV === 'production') {
+          return res.status(401).json({ error: 'Invalid royal email or password.' });
         }
-      });
+      }
+    }
+
+    // 2. Development Store Verification (Only when Supabase is unconfigured in development)
+    if (process.env.NODE_ENV !== 'production') {
+      const staff = fallbackStore.staffUsers.find(u => u.email.toLowerCase() === cleanEmail);
+      if (staff && staff.passwordHash && staff.passwordSalt) {
+        const hash = crypto.pbkdf2Sync(password, staff.passwordSalt, 10000, 64, 'sha512').toString('hex');
+        if (hash === staff.passwordHash) {
+          const token = `kemet-session-${crypto.randomBytes(32).toString('hex')}`;
+          const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000;
+          registerSession({
+            token,
+            userId: staff.id,
+            email: staff.email,
+            role: staff.role,
+            fullName: staff.fullName,
+            expiresAt
+          });
+
+          return res.json({
+            success: true,
+            token,
+            user: {
+              id: staff.id,
+              email: staff.email,
+              fullName: staff.fullName,
+              role: staff.role
+            }
+          });
+        }
+      }
     }
 
     return res.status(401).json({ error: 'Invalid royal email or password.' });
@@ -270,84 +208,100 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
 
 /**
  * Customer Registration
+ * Strictly assigns 'traveler' role. Disallows role escalation.
  */
-apiRouter.post('/auth/register', async (req: Request, res: Response) => {
+apiRouter.post('/auth/register', authRateLimiter, async (req: Request, res: Response) => {
   try {
     const { email, password, fullName, phone, whatsapp, hotelName, roomNumber } = req.body;
     if (!email || !password || !fullName) {
       return res.status(400).json({ error: 'Name, email, and password are required.' });
     }
 
-    const cleanEmail = email.trim().toLowerCase();
-    const supabase = getSupabaseServer();
-    let userId = `usr-${Date.now()}`;
-
-    if (supabase) {
-      try {
-        const { data, error } = await supabase.auth.signUp({
-          email: cleanEmail,
-          password,
-          options: {
-            data: {
-              full_name: fullName,
-              phone: phone || '',
-              whatsapp: whatsapp || '',
-              hotel_name: hotelName || '',
-              room_number: roomNumber || ''
-            }
-          }
-        });
-
-        if (!error && data.user) {
-          userId = data.user.id;
-          await (supabase.from('profiles') as any).upsert({
-            id: userId,
-            email: cleanEmail,
-            full_name: fullName,
-            phone: phone || null,
-            whatsapp: whatsapp || null,
-            hotel_name: hotelName || null,
-            room_number: roomNumber || null,
-            role: 'traveler',
-            vip_tier: 'Noble',
-            lead_status: 'Active Traveler'
-          });
-        }
-      } catch (sbErr: any) {
-        console.warn('[Supabase] Sign up error, registering locally:', sbErr.message);
-      }
+    if (typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters long.' });
     }
 
-    const salt = crypto.randomBytes(16).toString('hex');
-    const hash = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
-    const newUser = {
-      id: userId,
-      email: cleanEmail,
-      fullName,
-      role: 'traveler' as UserRole,
-      passwordHash: hash,
-      passwordSalt: salt,
-      phone: phone || '',
-      whatsapp: whatsapp || '',
-      hotelName: hotelName || '',
-      roomNumber: roomNumber || '',
-      createdAt: new Date().toISOString()
-    };
-    fallbackStore.staffUsers.push(newUser);
+    const cleanEmail = email.trim().toLowerCase();
+    const supabase = getSupabaseServer();
+    let userId: string = crypto.randomUUID();
+    let sessionToken: string | null = null;
 
-    const token = `kemet-session-${crypto.randomBytes(32).toString('hex')}`;
-    registerSession({
-      token,
-      userId: newUser.id,
-      email: newUser.email,
-      role: 'traveler',
-      fullName: newUser.fullName,
-      expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000
-    });
+    if (supabase) {
+      const { data, error } = await supabase.auth.signUp({
+        email: cleanEmail,
+        password,
+        options: {
+          data: {
+            full_name: fullName,
+            phone: phone || '',
+            whatsapp: whatsapp || '',
+            hotel_name: hotelName || '',
+            room_number: roomNumber || '',
+            role: 'traveler' // Strict traveler role
+          }
+        }
+      });
 
-    res.json({
+      if (error) {
+        return res.status(400).json({ error: error.message });
+      }
+
+      if (data.user) {
+        userId = data.user.id;
+        sessionToken = data.session?.access_token || null;
+
+        // Upsert profile with strict 'traveler' role
+        await (supabase.from('profiles') as any).upsert({
+          id: userId,
+          email: cleanEmail,
+          full_name: fullName,
+          phone: phone || null,
+          whatsapp: whatsapp || null,
+          hotel_name: hotelName || null,
+          room_number: roomNumber || null,
+          role: 'traveler',
+          vip_tier: 'Noble',
+          lead_status: 'Active Traveler',
+          lead_score: 50
+        });
+      }
+    } else {
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(503).json({ error: 'Authoritative user registration service unavailable.' });
+      }
+
+      // Dev store user creation
+      const salt = crypto.randomBytes(16).toString('hex');
+      const hash = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
+      const newUser = {
+        id: userId,
+        email: cleanEmail,
+        fullName,
+        role: 'traveler' as UserRole,
+        passwordHash: hash,
+        passwordSalt: salt,
+        phone: phone || '',
+        whatsapp: whatsapp || '',
+        hotelName: hotelName || '',
+        roomNumber: roomNumber || '',
+        createdAt: new Date().toISOString()
+      };
+      fallbackStore.staffUsers.push(newUser);
+
+      sessionToken = `kemet-session-${crypto.randomBytes(32).toString('hex')}`;
+      registerSession({
+        token: sessionToken,
+        userId: newUser.id,
+        email: newUser.email,
+        role: 'traveler',
+        fullName: newUser.fullName,
+        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000
+      });
+    }
+
+    res.status(201).json({
       success: true,
-      token,
+      token: sessionToken,
       user: {
         id: userId,
         email: cleanEmail,
@@ -365,7 +319,7 @@ apiRouter.post('/auth/register', async (req: Request, res: Response) => {
  */
 apiRouter.get('/auth/me', (req: AuthenticatedRequest, res: Response) => {
   if (!req.user) {
-    return res.status(401).json({ authenticated: false });
+    return res.status(401).json({ authenticated: false, error: 'Not authenticated' });
   }
   res.json({
     authenticated: true,
@@ -403,7 +357,7 @@ apiRouter.get('/admin/tours', requireStaff, async (req: Request, res: Response) 
     const tours = await fetchAllToursAdmin();
     res.json(tours);
   } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Failed to retrieve all tours.' });
+    res.status(500).json({ error: err.message || 'Failed to retrieve tours.' });
   }
 });
 
@@ -416,16 +370,15 @@ apiRouter.post('/admin/tours', requireStaff, async (req: AuthenticatedRequest, r
 
     const saved = await upsertTour(tourData);
 
-    fallbackStore.auditLogs.unshift({
-      id: `log-${Date.now()}`,
+    await recordAuditLog({
+      actor_id: req.user?.id,
       actor_email: req.user?.email || 'staff',
       actor_role: req.user?.role || 'staff',
-      action: 'TOUR_SAVED',
+      action: 'TOUR_UPSERT',
       entity_type: 'tour',
       entity_id: saved.id,
       status: 'SUCCESS',
-      details: `Excursion "${saved.title}" created or updated.`,
-      created_at: new Date().toISOString()
+      details: `Excursion "${saved.title}" saved by ${req.user?.email}.`
     });
 
     res.json(saved);
@@ -439,16 +392,15 @@ apiRouter.delete('/admin/tours/:id', requireStaff, async (req: AuthenticatedRequ
     const { id } = req.params;
     await deleteTourById(id);
 
-    fallbackStore.auditLogs.unshift({
-      id: `log-${Date.now()}`,
+    await recordAuditLog({
+      actor_id: req.user?.id,
       actor_email: req.user?.email || 'staff',
       actor_role: req.user?.role || 'staff',
       action: 'TOUR_DELETED',
       entity_type: 'tour',
       entity_id: id,
       status: 'SUCCESS',
-      details: `Tour ID ${id} deleted by staff.`,
-      created_at: new Date().toISOString()
+      details: `Tour ID ${id} deleted by ${req.user?.email}.`
     });
 
     res.json({ success: true, message: 'Excursion successfully deleted.' });
@@ -510,17 +462,13 @@ apiRouter.post('/bookings', async (req: AuthenticatedRequest, res: Response) => 
 });
 
 /**
- * Traveler's Own Bookings
+ * Traveler's Own Bookings (Strict Isolation)
  */
 apiRouter.get('/bookings/my-bookings', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const userEmail = req.user?.email.toLowerCase();
+    const userEmail = req.user?.email;
     const userId = req.user?.id;
-    const all = await fetchBookingsAdmin();
-    const userBookings = all.filter(b => 
-      (b.customer_id && b.customer_id === userId) ||
-      (b.traveler_email && b.traveler_email.toLowerCase() === userEmail)
-    );
+    const userBookings = await fetchUserBookings(userId, userEmail);
     res.json(userBookings);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -554,16 +502,15 @@ apiRouter.put('/admin/bookings/:id/status', requireStaff, async (req: Authentica
       req.user?.email
     );
 
-    fallbackStore.auditLogs.unshift({
-      id: `log-${Date.now()}`,
+    await recordAuditLog({
+      actor_id: req.user?.id,
       actor_email: req.user?.email || 'staff',
       actor_role: req.user?.role || 'staff',
       action: 'BOOKING_STATUS_UPDATE',
       entity_type: 'booking',
       entity_id: id,
       status: 'SUCCESS',
-      details: `Status of booking ${id} updated to ${status}.`,
-      created_at: new Date().toISOString()
+      details: `Status of booking ${id} updated to ${status}.`
     });
 
     res.json(updated);
@@ -595,26 +542,12 @@ apiRouter.post('/admin/bookings/check-in', requireStaff, async (req: Authenticat
 // ============================================================================
 
 apiRouter.get('/admin/finance/overview', requireRoles(['owner', 'admin', 'finance']), async (req: Request, res: Response) => {
-  const bookings = await fetchBookingsAdmin();
-  const transactions = fallbackStore.transactions;
-
-  const totalBookingValue = bookings.reduce((sum, b) => sum + (Number(b.total_cost) || 0), 0);
-  const totalCollected = transactions
-    .filter(t => t.transaction_type === 'payment' && t.status === 'completed')
-    .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
-  const totalRefunded = transactions
-    .filter(t => t.transaction_type === 'refund')
-    .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
-  const outstandingBalance = Math.max(0, totalBookingValue - totalCollected);
-
-  res.json({
-    totalBookingValue,
-    totalCollected,
-    totalRefunded,
-    outstandingBalance,
-    transactionCount: transactions.length,
-    recentTransactions: transactions.slice(0, 10)
-  });
+  try {
+    const financeData = await fetchFinanceOverview();
+    res.json(financeData);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 apiRouter.post('/admin/finance/transactions', requireRoles(['owner', 'admin', 'finance']), async (req: AuthenticatedRequest, res: Response) => {
@@ -624,33 +557,27 @@ apiRouter.post('/admin/finance/transactions', requireRoles(['owner', 'admin', 'f
       return res.status(400).json({ error: 'Valid transaction amount required.' });
     }
 
-    const newTxn = {
-      id: `txn-${Date.now()}`,
-      booking_id: booking_id || null,
+    const recorded = await recordFinancialTransaction({
+      booking_id,
       transaction_type: transaction_type || 'payment',
       amount: Number(amount),
-      currency: 'USD',
-      status: 'completed',
-      payment_method: payment_method || 'Manual Staff Entry',
-      external_reference: `MANUAL-${Date.now()}`,
-      notes: notes || '',
-      recorded_by: req.user?.email || 'staff',
-      created_at: new Date().toISOString()
-    };
+      payment_method,
+      notes,
+      recorded_by: req.user?.email
+    });
 
-    fallbackStore.transactions.unshift(newTxn);
+    await recordAuditLog({
+      actor_id: req.user?.id,
+      actor_email: req.user?.email || 'finance',
+      actor_role: req.user?.role || 'finance',
+      action: 'TRANSACTION_RECORDED',
+      entity_type: 'transaction',
+      entity_id: recorded.id,
+      status: 'SUCCESS',
+      details: `${transaction_type || 'payment'} of $${amount} recorded.`
+    });
 
-    // If linked to a booking, update booking payment status
-    if (booking_id) {
-      const b = fallbackStore.bookings.find(item => item.id === booking_id || item.booking_reference === booking_id);
-      if (b && transaction_type === 'payment') {
-        b.payment_status = 'paid';
-      } else if (b && transaction_type === 'refund') {
-        b.payment_status = 'refunded';
-      }
-    }
-
-    res.status(201).json(newTxn);
+    res.status(201).json(recorded);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -667,128 +594,129 @@ apiRouter.post('/crm/inquiries', async (req: AuthenticatedRequest, res: Response
       return res.status(400).json({ error: 'Name, email and message are required.' });
     }
 
-    const newInquiry = {
-      id: `inq-${Date.now()}`,
+    const inquiry = await submitInquiry({
       customer_id: req.user?.id || null,
       name,
       email,
-      phone: phone || '',
-      subject: subject || 'General Inquiry',
-      message,
-      status: 'new',
-      priority: 'medium',
-      internal_notes: '',
-      created_at: new Date().toISOString()
-    };
+      phone,
+      subject,
+      message
+    });
 
-    fallbackStore.inquiries.unshift(newInquiry);
-    res.status(201).json({ success: true, message: 'Inquiry received by our High Priests.', inquiry: newInquiry });
+    res.status(201).json({ success: true, message: 'Inquiry received by our High Priests.', inquiry });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-apiRouter.get('/admin/crm/inquiries', requireStaff, (req: Request, res: Response) => {
-  res.json(fallbackStore.inquiries);
+apiRouter.get('/admin/crm/inquiries', requireStaff, async (req: Request, res: Response) => {
+  try {
+    const inquiries = await fetchInquiriesAdmin();
+    res.json(inquiries);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-apiRouter.put('/admin/crm/inquiries/:id', requireStaff, (req: AuthenticatedRequest, res: Response) => {
-  const { id } = req.params;
-  const inq = fallbackStore.inquiries.find(i => i.id === id);
-  if (!inq) return res.status(404).json({ error: 'Inquiry not found.' });
-
-  const { status, internal_notes, priority } = req.body;
-  if (status) inq.status = status;
-  if (internal_notes !== undefined) inq.internal_notes = internal_notes;
-  if (priority) inq.priority = priority;
-
-  res.json(inq);
+apiRouter.put('/admin/crm/inquiries/:id', requireStaff, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { status, internal_notes, priority } = req.body;
+    const updated = await updateInquiryStatus(id, { status, internal_notes, priority });
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ============================================================================
 // REVIEWS & MODERATION
 // ============================================================================
 
-apiRouter.get('/reviews', (req: Request, res: Response) => {
-  const approved = fallbackStore.reviews.filter(r => r.status === 'approved');
-  res.json(approved);
-});
-
-apiRouter.post('/reviews', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-  const { tour_id, rating, comment, avatar } = req.body;
-  if (!tour_id || !rating || !comment) {
-    return res.status(400).json({ error: 'Tour ID, rating (1-5), and review text required.' });
+apiRouter.get('/reviews', async (req: Request, res: Response) => {
+  try {
+    const approved = await fetchApprovedReviews();
+    res.json(approved);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
-
-  const newReview = {
-    id: `rev-${Date.now()}`,
-    tour_id,
-    customer_id: req.user?.id || null,
-    author_name: req.user?.fullName || 'Traveler',
-    avatar: avatar || 'Noble Explorer',
-    rating: Math.min(5, Math.max(1, Number(rating))),
-    comment,
-    status: 'pending', // Moderation required
-    created_at: new Date().toISOString()
-  };
-
-  fallbackStore.reviews.unshift(newReview);
-  res.status(201).json({
-    success: true,
-    message: 'Your review was received and will appear once verified by our Scribes.',
-    review: newReview
-  });
 });
 
-apiRouter.get('/admin/reviews', requireStaff, (req: Request, res: Response) => {
-  res.json(fallbackStore.reviews);
+apiRouter.post('/reviews', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { tour_id, rating, comment, avatar } = req.body;
+    if (!tour_id || !rating || !comment) {
+      return res.status(400).json({ error: 'Tour ID, rating (1-5), and review text required.' });
+    }
+
+    const review = await submitReview({
+      tour_id,
+      customer_id: req.user?.id || null,
+      author_name: req.user?.fullName || 'Traveler',
+      avatar,
+      rating,
+      comment
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Your review was received and will appear once verified by our Scribes.',
+      review
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-apiRouter.put('/admin/reviews/:id/moderate', requireStaff, (req: AuthenticatedRequest, res: Response) => {
-  const { id } = req.params;
-  const { status } = req.body;
-  const rev = fallbackStore.reviews.find(r => r.id === id);
-  if (!rev) return res.status(404).json({ error: 'Review not found.' });
+apiRouter.get('/admin/reviews', requireStaff, async (req: Request, res: Response) => {
+  try {
+    const reviews = await fetchAllReviewsAdmin();
+    res.json(reviews);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-  rev.status = status === 'approved' ? 'approved' : 'rejected';
-  res.json(rev);
+apiRouter.put('/admin/reviews/:id/moderate', requireStaff, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const updated = await moderateReview(id, status, req.user?.id);
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ============================================================================
 // NEWSLETTER
-// ============================================================================
+// ============================================================
+apiRouter.post('/newsletter/subscribe', async (req: Request, res: Response) => {
+  try {
+    const { email, interests } = req.body;
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ error: 'Valid email address required.' });
+    }
 
-apiRouter.post('/newsletter/subscribe', (req: Request, res: Response) => {
-  const { email, interests } = req.body;
-  if (!email || !email.includes('@')) {
-    return res.status(400).json({ error: 'Valid email address required.' });
+    const subscriber = await subscribeNewsletter(email, interests);
+    res.status(201).json({
+      success: true,
+      message: 'Welcome to Kemet Spirit. Your 30% discount code is KEMET30.',
+      promo_code: 'KEMET30',
+      subscriber
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
-
-  const existing = fallbackStore.subscribers.find(s => s.email.toLowerCase() === email.toLowerCase());
-  if (existing) {
-    return res.json({ success: true, message: 'You are already inscribed in our sacred scrolls.' });
-  }
-
-  const newSub = {
-    id: `sub-${Date.now()}`,
-    email: email.trim().toLowerCase(),
-    interests: interests || [],
-    vip_tier: 'Noble',
-    promo_code: 'KEMET30',
-    is_subscribed: true,
-    consent_given_at: new Date().toISOString()
-  };
-
-  fallbackStore.subscribers.unshift(newSub);
-  res.status(201).json({
-    success: true,
-    message: 'Welcome to Kemet Spirit. Your 30% discount code is KEMET30.',
-    promo_code: 'KEMET30'
-  });
 });
 
-apiRouter.get('/admin/newsletter', requireStaff, (req: Request, res: Response) => {
-  res.json(fallbackStore.subscribers);
+apiRouter.get('/admin/newsletter', requireStaff, async (req: Request, res: Response) => {
+  try {
+    const list = await fetchSubscribersAdmin();
+    res.json(list);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ============================================================================
@@ -796,66 +724,103 @@ apiRouter.get('/admin/newsletter', requireStaff, (req: Request, res: Response) =
 // ============================================================================
 
 apiRouter.get('/admin/overview', requireStaff, async (req: Request, res: Response) => {
-  const bookings = await fetchBookingsAdmin();
-  const totalBookings = bookings.length;
-  const pendingBookings = bookings.filter(b => b.status === 'pending_approval').length;
-  const confirmedBookings = bookings.filter(b => b.status === 'confirmed').length;
-  const completedBookings = bookings.filter(b => b.status === 'completed').length;
-  const cancelledBookings = bookings.filter(b => b.status === 'cancelled').length;
+  try {
+    const [bookings, inquiries, reviews, financeData] = await Promise.all([
+      fetchBookingsAdmin(),
+      fetchInquiriesAdmin(),
+      fetchAllReviewsAdmin(),
+      fetchFinanceOverview()
+    ]);
 
-  const todayStr = new Date().toISOString().split('T')[0];
-  const upcomingToday = bookings.filter(b => b.scheduled_date === todayStr);
+    const totalBookings = bookings.length;
+    const pendingBookings = bookings.filter(b => b.status === 'pending_approval').length;
+    const confirmedBookings = bookings.filter(b => b.status === 'confirmed').length;
+    const completedBookings = bookings.filter(b => b.status === 'completed').length;
+    const cancelledBookings = bookings.filter(b => b.status === 'cancelled').length;
 
-  const transactions = fallbackStore.transactions;
-  const collectedRevenue = transactions
-    .filter(t => t.transaction_type === 'payment' && t.status === 'completed')
-    .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+    const todayStr = new Date().toISOString().split('T')[0];
+    const upcomingToday = bookings.filter(b => b.scheduled_date === todayStr);
 
-  const unreadInquiries = fallbackStore.inquiries.filter(i => i.status === 'new').length;
-  const pendingReviews = fallbackStore.reviews.filter(r => r.status === 'pending').length;
+    const unreadInquiries = inquiries.filter(i => i.status === 'new').length;
+    const pendingReviews = reviews.filter(r => r.status === 'pending').length;
 
-  res.json({
-    metrics: {
-      totalBookings,
-      pendingBookings,
-      confirmedBookings,
-      completedBookings,
-      cancelledBookings,
-      todayDepartures: upcomingToday.length,
-      collectedRevenue,
-      unreadInquiries,
-      pendingReviews
-    },
-    todayDeparturesList: upcomingToday,
-    recentBookings: bookings.slice(0, 5),
-    systemStatus: {
-      supabaseActive: isServerSupabaseConfigured,
-      serverTime: new Date().toISOString()
-    }
-  });
+    res.json({
+      metrics: {
+        totalBookings,
+        pendingBookings,
+        confirmedBookings,
+        completedBookings,
+        cancelledBookings,
+        todayDepartures: upcomingToday.length,
+        collectedRevenue: financeData.totalCollected,
+        unreadInquiries,
+        pendingReviews
+      },
+      todayDeparturesList: upcomingToday,
+      recentBookings: bookings.slice(0, 5),
+      systemStatus: {
+        supabaseActive: isServerSupabaseConfigured,
+        serverTime: new Date().toISOString()
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-apiRouter.get('/admin/audit-logs', requireStaff, (req: Request, res: Response) => {
-  res.json(fallbackStore.auditLogs.slice(0, 50));
+apiRouter.get('/admin/audit-logs', requireStaff, async (req: Request, res: Response) => {
+  try {
+    const logs = await fetchAuditLogsAdmin();
+    res.json(logs);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-apiRouter.get('/settings', (req: Request, res: Response) => {
-  res.json({
-    company: fallbackStore.settings.company_info,
-    operational: fallbackStore.settings.operational_defaults,
-    promo: fallbackStore.settings.promotional_banner
-  });
+apiRouter.get('/settings', async (req: Request, res: Response) => {
+  try {
+    const settings = await fetchSettings();
+    res.json({
+      company: settings.company_info,
+      operational: settings.operational_defaults,
+      promo: settings.promotional_banner
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-apiRouter.get('/admin/settings', requireStaff, (req: Request, res: Response) => {
-  res.json(fallbackStore.settings);
+apiRouter.get('/admin/settings', requireStaff, async (req: Request, res: Response) => {
+  try {
+    const settings = await fetchSettings();
+    res.json(settings);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-apiRouter.put('/admin/settings', requireRoles(['owner', 'admin']), (req: AuthenticatedRequest, res: Response) => {
-  const { category, settings } = req.body;
-  if (!category || !settings) return res.status(400).json({ error: 'Category and settings required.' });
-  fallbackStore.settings[category] = { ...fallbackStore.settings[category], ...settings };
-  res.json(fallbackStore.settings[category]);
+apiRouter.put('/admin/settings', requireRoles(['owner', 'admin']), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { category, settings } = req.body;
+    if (!category || !settings) return res.status(400).json({ error: 'Category and settings required.' });
+    
+    const updated = await updateSettings(category, settings, req.user?.id);
+
+    await recordAuditLog({
+      actor_id: req.user?.id,
+      actor_email: req.user?.email || 'admin',
+      actor_role: req.user?.role || 'admin',
+      action: 'SETTINGS_UPDATE',
+      entity_type: 'settings',
+      entity_id: category,
+      status: 'SUCCESS',
+      details: `Settings category "${category}" updated.`
+    });
+
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ============================================================================
@@ -877,11 +842,15 @@ function getAIClient(): GoogleGenAI {
 
 apiRouter.post('/ai/scribe-chat', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { message, chatHistory } = req.body;
+    const { message } = req.body;
     if (!message || typeof message !== 'string') {
       return res.status(400).json({ error: 'Message is required.' });
     }
 
+    // Safety: sanitize input length
+    const cleanMessage = message.slice(0, 1000).trim();
+
+    // Context contains only public catalog metadata (NO customer or booking PII)
     const tours = await fetchPublishedTours();
     const tourList = tours.map(t => `- ${t.title} (${t.duration}, $${t.base_price})`).join('\n');
 
@@ -889,7 +858,7 @@ apiRouter.post('/ai/scribe-chat', async (req: AuthenticatedRequest, res: Respons
 Available tours in our sanctuary:
 ${tourList}
 
-Traveler message: "${message}"
+Traveler message: "${cleanMessage}"
 
 Respond concisely (1-2 paragraphs) in the exact language of the user, guiding them through Egypt's treasures and excursions.`;
 

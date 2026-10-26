@@ -1,51 +1,45 @@
-import { createClient, SupabaseClient, User, Session } from '@supabase/supabase-js';
-import { Database } from '../types/supabase';
-
-const metaEnv = (import.meta as any).env || {};
-const supabaseUrl = metaEnv.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = metaEnv.VITE_SUPABASE_ANON_KEY || '';
-
-export const isSupabaseConfigured = Boolean(
-  supabaseUrl && 
-  supabaseAnonKey && 
-  supabaseUrl !== 'https://your-project.supabase.co'
-);
-
-export const supabase: SupabaseClient<Database> | null = isSupabaseConfigured
-  ? createClient<Database>(supabaseUrl, supabaseAnonKey, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
-        storage: window.localStorage,
-      },
-    })
-  : null;
-
 /**
- * Public Authentication API Wrapper
+ * Client Auth & API Gateway Helper
+ * All client traffic routes exclusively through Express /api/* endpoints.
+ * Direct browser access to Supabase is strictly disabled for security and data integrity.
  */
-export async function getCurrentUser(): Promise<User | null> {
-  if (!supabase) return null;
-  const { data: { user } } = await supabase.auth.getUser();
-  return user;
-}
 
-export async function getCurrentSession(): Promise<Session | null> {
-  if (!supabase) return null;
-  const { data: { session } } = await supabase.auth.getSession();
-  return session;
+export const isSupabaseConfigured = true;
+
+export async function getCurrentUser(): Promise<any | null> {
+  const token = localStorage.getItem('kemet_session_token') || localStorage.getItem('kemet_admin_token');
+  if (!token) return null;
+
+  try {
+    const res = await fetch('/api/auth/me', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.user || null;
+  } catch {
+    return null;
+  }
 }
 
 export async function signOutUser(): Promise<{ error: Error | null }> {
-  if (!supabase) return { error: null };
-  const { error } = await supabase.auth.signOut();
-  return { error };
+  const token = localStorage.getItem('kemet_session_token') || localStorage.getItem('kemet_admin_token');
+  try {
+    if (token) {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+    }
+  } catch (err: any) {
+    return { error: err };
+  } finally {
+    localStorage.removeItem('kemet_session_token');
+    localStorage.removeItem('kemet_admin_token');
+    localStorage.removeItem('kemet_user');
+    localStorage.removeItem('kemet_admin_verified');
+  }
+  return { error: null };
 }
 
-export async function onAuthStateChange(
-  callback: (event: string, session: Session | null) => void
-) {
-  if (!supabase) return { data: { subscription: { unsubscribe: () => {} } } };
-  return supabase.auth.onAuthStateChange(callback);
-}
+export const supabase = null;
