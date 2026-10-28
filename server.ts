@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { apiRouter } from './server/routes/apiRouter';
 import { fetchPublishedTours, isServerSupabaseConfigured } from './server/supabaseServer';
@@ -8,17 +9,33 @@ import { fetchPublishedTours, isServerSupabaseConfigured } from './server/supaba
 // Load environment variables from .env if present
 dotenv.config();
 
+const getDirname = (): string => {
+  try {
+    // In CommonJS bundles, __dirname is already defined
+    if (typeof __dirname !== 'undefined') {
+      return __dirname;
+    }
+  } catch {}
+  try {
+    // In ES modules (tsx dev mode)
+    return path.dirname(fileURLToPath(import.meta.url));
+  } catch {
+    return process.cwd();
+  }
+};
+
 function resolveDistPath(): string {
+  const currentDir = getDirname();
   const candidates = [
-    // If running bundled inside dist/server.cjs, __dirname is the dist directory itself
-    __dirname,
-    // If running from project root (e.g. node server.js)
-    path.resolve(__dirname, 'dist'),
+    // If running bundled inside dist/server.cjs, currentDir is the dist directory itself
+    currentDir,
+    // If running from project root (e.g. node server.js or tsx server.ts)
+    path.resolve(currentDir, 'dist'),
     // If running via process.cwd()
     path.resolve(process.cwd(), 'dist'),
     path.resolve(process.cwd()),
     // Parent dist in case of nested execution
-    path.resolve(__dirname, '..', 'dist'),
+    path.resolve(currentDir, '..', 'dist'),
   ];
 
   for (const candidate of candidates) {
@@ -50,12 +67,12 @@ async function startServer() {
   const distPath = resolveDistPath();
   const indexPath = path.join(distPath, 'index.html');
   const hasBuiltFrontend = fs.existsSync(indexPath);
-  const isProd = process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'publish' || hasBuiltFrontend;
+  const isProd = process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'publish';
 
   console.log('[Kemet Spirit] ========================================');
   console.log('[Kemet Spirit] Server starting...');
   console.log(`[Kemet Spirit] Node.js version: ${process.version}`);
-  console.log(`[Kemet Spirit] NODE_ENV: ${process.env.NODE_ENV || '(not set, running in production/publish mode)'}`);
+  console.log(`[Kemet Spirit] NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
   console.log(`[Kemet Spirit] Raw PORT env: ${rawPort || '(not set)'}`);
   console.log(`[Kemet Spirit] Listen target: ${listenTarget}`);
   console.log(`[Kemet Spirit] Frontend directory: ${distPath}`);
@@ -160,7 +177,7 @@ Sitemap: ${protocol}://${host}/sitemap.xml
   });
 
   // Client Routing & Static Assets
-  if (!isProd && !hasBuiltFrontend) {
+  if (!isProd) {
     try {
       // Dynamic import in development so production bundles never require Vite at module load
       const viteModule = await import('vite');
