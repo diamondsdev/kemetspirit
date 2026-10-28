@@ -79,8 +79,8 @@ export default function SEOMetadataManager({
     // Construct Page Specific Metadata
     if (activeExcursion) {
       pageTitle = `${activeExcursion.title} (${activeExcursion.duration}) - Kemet Tours`;
-      metaDesc = `${activeExcursion.description.substring(0, 155)}... Book now for $${activeExcursion.price} USD per person. Included: ${activeExcursion.inclusions.slice(0, 3).join(', ')}.`;
-      shareImg = activeExcursion.image || defaultImage;
+      metaDesc = `${(activeExcursion.description || '').substring(0, 155)}... Book now for $${activeExcursion.price || activeExcursion.base_price || 100} USD per person. Included: ${(activeExcursion.inclusions || []).slice(0, 3).join(', ')}.`;
+      shareImg = activeExcursion.image || activeExcursion.primary_image_url || defaultImage;
       canonicalPath = `#excursion-${activeExcursion.id}`;
 
       jsonLdSchemas.push({

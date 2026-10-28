@@ -212,7 +212,7 @@ export default function ScrollItineraryModal({ booking, excursion, onClose }: Sc
                       <div>
                         <span className="font-mono text-[9px] uppercase tracking-wider text-[#8e6512] font-bold block mb-1">What's Included:</span>
                         <ul className="space-y-1 text-[10px] list-disc list-inside text-[#563c27]">
-                          {excursion.inclusions.slice(0, 3).map((inc, i) => (
+                          {(excursion.inclusions || []).slice(0, 3).map((inc, i) => (
                             <li key={i}>{inc}</li>
                           ))}
                         </ul>
@@ -220,7 +220,7 @@ export default function ScrollItineraryModal({ booking, excursion, onClose }: Sc
                       <div>
                         <span className="font-mono text-[9px] uppercase tracking-wider text-[#8e6512] font-bold block mb-1">Tour Highlights:</span>
                         <ul className="space-y-1 text-[10px] list-disc list-inside text-[#563c27]">
-                          {excursion.highlights.slice(0, 3).map((hi, i) => (
+                          {(excursion.highlights || []).slice(0, 3).map((hi, i) => (
                             <li key={i}>{hi}</li>
                           ))}
                         </ul>

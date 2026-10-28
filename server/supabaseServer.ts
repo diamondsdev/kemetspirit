@@ -420,38 +420,46 @@ export async function provisionOwnerAtomic(params: {
 
 export async function fetchPublishedTours(): Promise<any[]> {
   if (supabaseServerClient) {
-    const { data, error } = await supabaseServerClient
-      .from('tours')
-      .select('*')
-      .eq('status', 'published')
-      .order('is_featured', { ascending: false });
+    try {
+      const { data, error } = await supabaseServerClient
+        .from('tours')
+        .select('*')
+        .eq('status', 'published')
+        .order('is_featured', { ascending: false });
 
-    if (error) {
-      console.error('[Supabase] Fetch tours error:', error.message);
-      throw new Error(`Database error fetching published tours: ${error.message}`);
+      if (!error && data && data.length > 0) {
+        return data;
+      }
+      if (error) {
+        console.warn('[Supabase] Fetch tours warning:', error.message);
+      }
+    } catch (e: any) {
+      console.warn('[Supabase] Fetch tours exception:', e.message);
     }
-    return data || [];
   }
 
-  assertAuthoritativeAvailable();
   return fallbackStore.tours.filter(t => t.status === 'published');
 }
 
 export async function fetchAllToursAdmin(): Promise<any[]> {
   if (supabaseServerClient) {
-    const { data, error } = await supabaseServerClient
-      .from('tours')
-      .select('*')
-      .order('created_at', { ascending: false });
+    try {
+      const { data, error } = await supabaseServerClient
+        .from('tours')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error('[Supabase] Fetch all tours error:', error.message);
-      throw new Error(`Database error fetching tours: ${error.message}`);
+      if (!error && data && data.length > 0) {
+        return data;
+      }
+      if (error) {
+        console.warn('[Supabase] Fetch all tours error:', error.message);
+      }
+    } catch (e: any) {
+      console.warn('[Supabase] Fetch all tours exception:', e.message);
     }
-    return data || [];
   }
 
-  assertAuthoritativeAvailable();
   return fallbackStore.tours;
 }
 

@@ -346,7 +346,21 @@ apiRouter.post('/auth/logout', (req: AuthenticatedRequest, res: Response) => {
 apiRouter.get('/tours', async (req: Request, res: Response) => {
   try {
     const tours = await fetchPublishedTours();
-    res.json(tours);
+    const formatted = tours.map(t => ({
+      ...t,
+      ancientLore: t.ancientLore || t.ancient_lore || '',
+      ancient_lore: t.ancient_lore || t.ancientLore || '',
+      category: t.category || t.category_slug || 'diving',
+      category_slug: t.category_slug || t.category || 'diving',
+      price: Number(t.price ?? t.base_price ?? 100),
+      base_price: Number(t.base_price ?? t.price ?? 100),
+      image: t.image || t.primary_image_url || '/src/assets/images/egypt_red_sea_hero_1784070351173.jpg',
+      primary_image_url: t.primary_image_url || t.image || '/src/assets/images/egypt_red_sea_hero_1784070351173.jpg',
+      inclusions: Array.isArray(t.inclusions) ? t.inclusions : [],
+      highlights: Array.isArray(t.highlights) ? t.highlights : [],
+      exclusions: Array.isArray(t.exclusions) ? t.exclusions : [],
+    }));
+    res.json(formatted);
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to retrieve tours.' });
   }

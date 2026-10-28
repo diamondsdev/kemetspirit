@@ -952,13 +952,52 @@ export default function ExcursionCatalog({ onAddBooking, excursions, onRequestAu
     }, 2500);
   };
 
+  const normalizeExcursionItem = (ex: any) => {
+    if (!ex) return ex;
+    const inclusions = Array.isArray(ex.inclusions)
+      ? ex.inclusions
+      : (typeof ex.inclusions === 'string' ? (() => { try { return JSON.parse(ex.inclusions); } catch { return []; } })() : []);
+    const highlights = Array.isArray(ex.highlights)
+      ? ex.highlights
+      : (typeof ex.highlights === 'string' ? (() => { try { return JSON.parse(ex.highlights); } catch { return []; } })() : []);
+    const exclusions = Array.isArray(ex.exclusions)
+      ? ex.exclusions
+      : (typeof ex.exclusions === 'string' ? (() => { try { return JSON.parse(ex.exclusions); } catch { return []; } })() : []);
+
+    const lore = ex.ancientLore || ex.ancient_lore || "Guided by ancient Egypt's enduring wisdom and royal guardians.";
+
+    return {
+      ...ex,
+      id: ex.id || ex.slug || 'tour-1',
+      title: ex.title || 'Sacred Egyptian Expedition',
+      tagline: ex.tagline || '',
+      category: ex.category || ex.category_slug || 'diving',
+      category_slug: ex.category_slug || ex.category || 'diving',
+      duration: ex.duration || 'Full Day',
+      price: Number(ex.price ?? ex.base_price ?? 100),
+      base_price: Number(ex.base_price ?? ex.price ?? 100),
+      rating: Number(ex.rating) || 5.0,
+      reviewCount: Number(ex.reviewCount ?? ex.review_count ?? 0),
+      review_count: Number(ex.review_count ?? ex.reviewCount ?? 0),
+      location: ex.location || 'Red Sea, Egypt',
+      image: ex.image || ex.primary_image_url || '/src/assets/images/egypt_red_sea_hero_1784070351173.jpg',
+      primary_image_url: ex.primary_image_url || ex.image || '/src/assets/images/egypt_red_sea_hero_1784070351173.jpg',
+      description: ex.description || '',
+      ancientLore: lore,
+      ancient_lore: lore,
+      inclusions,
+      highlights,
+      exclusions,
+    };
+  };
+
   const activeCatalog = React.useMemo(() => {
-    const rawCatalog = excursions && excursions.length > 0 ? excursions : EXCURSIONS_DATA;
+    const rawCatalog = (excursions && excursions.length > 0 ? excursions : EXCURSIONS_DATA).map(normalizeExcursionItem);
     if (language === 'de') {
       return rawCatalog.map(ex => {
         const deEx = EXCURSIONS_DATA_DE.find(item => item.id === ex.id);
         if (deEx) {
-          return {
+          return normalizeExcursionItem({
             ...ex,
             title: deEx.title,
             tagline: deEx.tagline,
@@ -968,7 +1007,7 @@ export default function ExcursionCatalog({ onAddBooking, excursions, onRequestAu
             inclusions: deEx.inclusions,
             highlights: deEx.highlights,
             ancientLore: deEx.ancientLore
-          };
+          });
         }
         return ex;
       });
@@ -976,7 +1015,7 @@ export default function ExcursionCatalog({ onAddBooking, excursions, onRequestAu
       return rawCatalog.map(ex => {
         const plEx = EXCURSIONS_DATA_PL.find(item => item.id === ex.id);
         if (plEx) {
-          return {
+          return normalizeExcursionItem({
             ...ex,
             title: plEx.title,
             tagline: plEx.tagline,
@@ -986,7 +1025,7 @@ export default function ExcursionCatalog({ onAddBooking, excursions, onRequestAu
             inclusions: plEx.inclusions,
             highlights: plEx.highlights,
             ancientLore: plEx.ancientLore
-          };
+          });
         }
         return ex;
       });
@@ -994,7 +1033,7 @@ export default function ExcursionCatalog({ onAddBooking, excursions, onRequestAu
       return rawCatalog.map(ex => {
         const arEx = EXCURSIONS_DATA_AR.find(item => item.id === ex.id);
         if (arEx) {
-          return {
+          return normalizeExcursionItem({
             ...ex,
             title: arEx.title,
             tagline: arEx.tagline,
@@ -1004,7 +1043,7 @@ export default function ExcursionCatalog({ onAddBooking, excursions, onRequestAu
             inclusions: arEx.inclusions,
             highlights: arEx.highlights,
             ancientLore: arEx.ancientLore
-          };
+          });
         }
         return ex;
       });
@@ -1270,7 +1309,7 @@ Please seal my booking with the High Priest approval!`;
                             {language === 'de' ? 'Inbegriffene Leistungen' : language === 'pl' ? 'W cenie' : 'Sacred Inclusions'}
                           </h5>
                           <ul className="text-xs text-stone-300 space-y-1 pl-4 list-disc">
-                            {ex1.inclusions.slice(0, 3).map((inc, i) => (
+                            {(ex1.inclusions || []).slice(0, 3).map((inc: string, i: number) => (
                               <li key={i}>{inc}</li>
                             ))}
                           </ul>
@@ -1344,7 +1383,7 @@ Please seal my booking with the High Priest approval!`;
                             {language === 'de' ? 'Inbegriffene Leistungen' : language === 'pl' ? 'W cenie' : 'Sacred Inclusions'}
                           </h5>
                           <ul className="text-xs text-stone-300 space-y-1 pl-4 list-disc">
-                            {ex2.inclusions.slice(0, 3).map((inc, i) => (
+                            {(ex2.inclusions || []).slice(0, 3).map((inc: string, i: number) => (
                               <li key={i}>{inc}</li>
                             ))}
                           </ul>
@@ -1587,7 +1626,7 @@ Please seal my booking with the High Priest approval!`;
                   <strong className="font-serif text-[#d4af37] not-italic block mb-0.5 uppercase tracking-widest text-[10px]">
                     {language === 'de' ? '𓋹 Pharaonische Sage:' : language === 'pl' ? '𓋹 Faraońska opowieść:' : '𓋹 Pharaonic Lore:'}
                   </strong>
-                  "{ex.ancientLore.slice(0, 115)}..."
+                  "{((ex.ancientLore || ex.ancient_lore || '')).slice(0, 115)}..."
                 </div>
 
                 {/* Buttons */}
@@ -1861,7 +1900,7 @@ Please seal my booking with the High Priest approval!`;
                         <Sparkles className="w-4 h-4 text-[#d4af37]" /> {language === 'de' ? 'Highlights des Tages' : language === 'pl' ? 'Atrakcje dnia' : 'Highlights of the Day'}
                       </h4>
                       <ul className="space-y-1.5 text-stone-300 text-xs list-disc list-inside">
-                        {selectedExcursion.highlights.map((item, i) => (
+                        {(selectedExcursion.highlights || []).map((item: string, i: number) => (
                           <li key={i}>{item}</li>
                         ))}
                       </ul>
@@ -1872,7 +1911,7 @@ Please seal my booking with the High Priest approval!`;
                         <CheckCircle className="w-4 h-4 text-emerald-500" /> {language === 'de' ? 'Königliche Inklusivleistungen' : language === 'pl' ? 'Królewskie świadczenia' : 'Royal Inclusions'}
                       </h4>
                       <ul className="space-y-1.5 text-stone-300 text-xs list-disc list-inside">
-                        {selectedExcursion.inclusions.map((item, i) => (
+                        {(selectedExcursion.inclusions || []).map((item: string, i: number) => (
                           <li key={i}>{item}</li>
                         ))}
                       </ul>

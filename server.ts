@@ -6,7 +6,9 @@ import { fetchPublishedTours } from './server/supabaseServer';
 
 async function startServer() {
   const app = express();
-  const PORT = parseInt(process.env.PORT || '3000', 10);
+  const rawPort = process.env.PORT;
+  const parsedPort = rawPort ? parseInt(rawPort, 10) : 3000;
+  const listenPort = !rawPort || isNaN(parsedPort) ? (rawPort || 3000) : parsedPort;
 
   app.disable('x-powered-by');
   app.use(express.json({ limit: '10mb' }));
@@ -101,9 +103,15 @@ Sitemap: ${protocol}://${host}/sitemap.xml
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Kemet Spirit] Server operating securely on http://0.0.0.0:${PORT}`);
-  });
+  if (typeof listenPort === 'number') {
+    app.listen(listenPort, '0.0.0.0', () => {
+      console.log(`[Kemet Spirit] Server operating securely on http://0.0.0.0:${listenPort}`);
+    });
+  } else {
+    app.listen(listenPort, () => {
+      console.log(`[Kemet Spirit] Server operating securely on socket ${listenPort}`);
+    });
+  }
 }
 
 startServer().catch((err) => {
