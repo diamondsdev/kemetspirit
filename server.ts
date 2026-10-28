@@ -2,19 +2,66 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
-import { createServer as createViteServer } from 'vite';
 import { apiRouter } from './server/routes/apiRouter';
-import { fetchPublishedTours } from './server/supabaseServer';
+import { fetchPublishedTours, isServerSupabaseConfigured } from './server/supabaseServer';
 
 // Load environment variables from .env if present
 dotenv.config();
 
+function resolveDistPath(): string {
+  const candidates = [
+    // If running bundled inside dist/server.cjs, __dirname is the dist directory itself
+    __dirname,
+    // If running from project root (e.g. node server.js)
+    path.resolve(__dirname, 'dist'),
+    // If running via process.cwd()
+    path.resolve(process.cwd(), 'dist'),
+    path.resolve(process.cwd()),
+    // Parent dist in case of nested execution
+    path.resolve(__dirname, '..', 'dist'),
+  ];
+
+  for (const candidate of candidates) {
+    const testIndex = path.join(candidate, 'index.html');
+    if (fs.existsSync(testIndex)) {
+      return candidate;
+    }
+  }
+
+  // Default fallback
+  return path.resolve(process.cwd(), 'dist');
+}
+
 async function startServer() {
   const app = express();
   const rawPort = process.env.PORT;
-  const parsedPort = rawPort ? parseInt(rawPort, 10) : 3000;
-  // Handle both numeric ports and Hostinger Passenger unix sockets / named pipes
-  const listenPort = !rawPort || isNaN(parsedPort) ? (rawPort || 3000) : parsedPort;
+  let listenTarget: number | string = 3000;
+
+  if (rawPort) {
+    const numericPort = Number(rawPort);
+    if (!Number.isNaN(numericPort) && numericPort > 0) {
+      listenTarget = numericPort;
+    } else {
+      // Unix domain socket or named pipe provided by Hostinger Passenger
+      listenTarget = rawPort;
+    }
+  }
+
+  const distPath = resolveDistPath();
+  const indexPath = path.join(distPath, 'index.html');
+  const hasBuiltFrontend = fs.existsSync(indexPath);
+  const isProd = process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'publish' || hasBuiltFrontend;
+
+  console.log('[Kemet Spirit] ========================================');
+  console.log('[Kemet Spirit] Server starting...');
+  console.log(`[Kemet Spirit] Node.js version: ${process.version}`);
+  console.log(`[Kemet Spirit] NODE_ENV: ${process.env.NODE_ENV || '(not set, running in production/publish mode)'}`);
+  console.log(`[Kemet Spirit] Raw PORT env: ${rawPort || '(not set)'}`);
+  console.log(`[Kemet Spirit] Listen target: ${listenTarget}`);
+  console.log(`[Kemet Spirit] Frontend directory: ${distPath}`);
+  console.log(`[Kemet Spirit] Frontend index.html exists: ${hasBuiltFrontend}`);
+  console.log(`[Kemet Spirit] Supabase configured: ${isServerSupabaseConfigured}`);
+  console.log('[Kemet Spirit] ========================================');
 
   app.disable('x-powered-by');
   app.use(express.json({ limit: '10mb' }));
@@ -113,46 +160,58 @@ Sitemap: ${protocol}://${host}/sitemap.xml
   });
 
   // Client Routing & Static Assets
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
+  if (!isProd && !hasBuiltFrontend) {
+    try {
+      // Dynamic import in development so production bundles never require Vite at module load
+      const viteModule = await import('vite');
+      const vite = await viteModule.createServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+      console.log('[Kemet Spirit] Running with Vite development middleware');
+    } catch (e: any) {
+      console.warn('[Kemet Spirit] Failed to start Vite middleware, falling back to static files:', e.message);
+      app.use(express.static(distPath, { maxAge: '1d', index: false }));
+    }
   } else {
-    // Robust dist resolution for Hostinger Passenger & standalone Node environments
-    const candidatePaths = [
-      path.join(process.cwd(), 'dist'),
-      path.resolve(__dirname), // in case server bundle runs directly from dist/
-      path.resolve(__dirname, 'dist'), // in case running from repo root
-      path.resolve(__dirname, '..', 'dist'), // in case running from a nested directory
-    ];
-    const distPath = candidatePaths.find(p => fs.existsSync(path.join(p, 'index.html'))) || path.join(process.cwd(), 'dist');
-
-    // Serve static frontend assets
+    // Production / Published mode with pre-built frontend
+    console.log(`[Kemet Spirit] Serving production frontend from: ${distPath}`);
     app.use(express.static(distPath, {
       maxAge: '1d',
       index: false,
     }));
 
+    const assetsPath = path.join(distPath, 'assets');
+    if (fs.existsSync(assetsPath)) {
+      app.use('/assets', express.static(assetsPath, {
+        maxAge: '1y',
+        immutable: true,
+      }));
+    }
+
     // SPA catch-all fallback
     app.get('*', (req, res) => {
-      const indexPath = path.join(distPath, 'index.html');
       if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);
       } else {
-        res.status(500).send('Production build not found. Please execute "npm run build" to generate dist/index.html.');
+        res.status(503).json({
+          error: 'Frontend build not found',
+          message: 'The frontend has not been built yet. Please run "npm run build" to generate dist/index.html.',
+          distPath
+        });
       }
     });
   }
 
-  if (typeof listenPort === 'number') {
-    app.listen(listenPort, '0.0.0.0', () => {
-      console.log(`[Kemet Spirit] Server operating securely on http://0.0.0.0:${listenPort}`);
+  if (typeof listenTarget === 'number') {
+    const host = process.env.HOST || '0.0.0.0';
+    app.listen(listenTarget, host, () => {
+      console.log(`[Kemet Spirit] Server listening on http://${host}:${listenTarget}`);
     });
   } else {
-    app.listen(listenPort, () => {
-      console.log(`[Kemet Spirit] Server operating securely on socket ${listenPort}`);
+    app.listen(listenTarget, () => {
+      console.log(`[Kemet Spirit] Server listening on socket ${listenTarget}`);
     });
   }
 }
