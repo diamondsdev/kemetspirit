@@ -1058,17 +1058,22 @@ export async function updateInquiryStatus(id: string, updates: {
 
 export async function fetchApprovedReviews(): Promise<any[]> {
   if (supabaseServerClient) {
-    const { data, error } = await supabaseServerClient
-      .from('reviews')
-      .select('*')
-      .eq('status', 'approved')
-      .order('created_at', { ascending: false });
+    try {
+      const { data, error } = await supabaseServerClient
+        .from('reviews')
+        .select('*')
+        .eq('status', 'approved')
+        .order('created_at', { ascending: false });
 
-    if (error) throw new Error(error.message);
-    return data || [];
+      if (!error && data) return data;
+      if (error) {
+        console.warn('[Supabase] fetchApprovedReviews warning:', error.message);
+      }
+    } catch (e: any) {
+      console.warn('[Supabase] fetchApprovedReviews error:', e.message);
+    }
   }
 
-  assertAuthoritativeAvailable();
   return fallbackStore.reviews.filter(r => r.status === 'approved');
 }
 

@@ -1,13 +1,19 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
+import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
 import { apiRouter } from './server/routes/apiRouter';
 import { fetchPublishedTours } from './server/supabaseServer';
+
+// Load environment variables from .env if present
+dotenv.config();
 
 async function startServer() {
   const app = express();
   const rawPort = process.env.PORT;
   const parsedPort = rawPort ? parseInt(rawPort, 10) : 3000;
+  // Handle both numeric ports and Hostinger Passenger unix sockets / named pipes
   const listenPort = !rawPort || isNaN(parsedPort) ? (rawPort || 3000) : parsedPort;
 
   app.disable('x-powered-by');
@@ -21,6 +27,15 @@ async function startServer() {
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     next();
+  });
+
+  // Top-level /health probe for hosting provider health checks (in addition to /api/health)
+  app.get('/health', (req, res) => {
+    res.json({
+      status: 'ok',
+      service: 'Kemet Spirit Hostinger Deployment',
+      timestamp: new Date().toISOString()
+    });
   });
 
   // Mount Authoritative API Router
@@ -88,6 +103,15 @@ Sitemap: ${protocol}://${host}/sitemap.xml
     res.send(content);
   });
 
+  // Explicit API 404 handler to prevent API requests from falling through to the SPA index.html
+  app.all('/api/*', (req, res) => {
+    res.status(404).json({
+      error: 'Not Found',
+      message: `API endpoint ${req.method} ${req.originalUrl} not found`,
+      timestamp: new Date().toISOString()
+    });
+  });
+
   // Client Routing & Static Assets
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -96,10 +120,29 @@ Sitemap: ${protocol}://${host}/sitemap.xml
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    // Robust dist resolution for Hostinger Passenger & standalone Node environments
+    const candidatePaths = [
+      path.join(process.cwd(), 'dist'),
+      path.resolve(__dirname), // in case server bundle runs directly from dist/
+      path.resolve(__dirname, 'dist'), // in case running from repo root
+      path.resolve(__dirname, '..', 'dist'), // in case running from a nested directory
+    ];
+    const distPath = candidatePaths.find(p => fs.existsSync(path.join(p, 'index.html'))) || path.join(process.cwd(), 'dist');
+
+    // Serve static frontend assets
+    app.use(express.static(distPath, {
+      maxAge: '1d',
+      index: false,
+    }));
+
+    // SPA catch-all fallback
     app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      const indexPath = path.join(distPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        res.status(500).send('Production build not found. Please execute "npm run build" to generate dist/index.html.');
+      }
     });
   }
 
